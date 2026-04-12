@@ -1,29 +1,25 @@
 from sqlalchemy.orm import Session
-from app.core.config import settings
+
 from app.core.security import get_password_hash
-from app.models import AppSetting, User
+from app.models.user import User
 
 
 def init_db(db: Session) -> None:
-    users = [
-        ('Ivan', 'Iván', 'admin', settings.INIT_ADMIN_PASSWORD),
-        ('Claudia', 'Claudia', 'admin', settings.INIT_ADMIN_PASSWORD),
-        ('Tienda', 'Tienda', 'store', settings.INIT_STORE_PASSWORD),
+    users_to_create = [
+        {"username": "Ivan", "password": "Nicole@1", "role": "admin"},
+        {"username": "Claudia", "password": "Nicole@1", "role": "admin"},
+        {"username": "Tienda", "password": "tienda", "role": "store"},
     ]
 
-    for username, display_name, role, password in users:
-        existing = db.query(User).filter(User.username == username).first()
+    for item in users_to_create:
+        existing = db.query(User).filter(User.username == item["username"]).first()
         if not existing:
-            db.add(User(
-                username=username,
-                display_name=display_name,
-                role=role,
-                hashed_password=get_password_hash(password),
+            db_user = User(
+                username=item["username"],
+                hashed_password=get_password_hash(item["password"]),
+                role=item["role"],
                 is_active=True,
-            ))
-
-    setting = db.query(AppSetting).filter(AppSetting.id == 1).first()
-    if not setting:
-        db.add(AppSetting(id=1, extended_schedule_enabled=False))
+            )
+            db.add(db_user)
 
     db.commit()
