@@ -1,0 +1,476 @@
+import { useEffect, useMemo, useState } from 'react'
+import { apiFetch } from './lib/api'
+
+const DAILY_TARGET = 500
+const MONTHLY_TARGET = 12000
+const EXPENSE_CATEGORIES = [
+  'Alquiler',
+  'Internet',
+  'Alarma',
+  'Agua y luz',
+  'Empleado 1',
+  'Empleado 2',
+  'Seguridad Social',
+  'Otros',
+]
+
+function money(n) {
+  return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(Number(n || 0))
+}
+
+function formatDate(dateString) {
+  return new Date(`${dateString}T12:00:00`).toLocaleDateString('es-ES')
+}
+
+function getTodayKey() {
+  const d = new Date()
+  return d.toISOString().slice(0, 10)
+}
+
+function addDays(dateStr, days) {
+  const d = new Date(`${dateStr}T12:00:00`)
+  d.setDate(d.getDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+
+function addMonths(monthKey, delta) {
+  const [year, month] = monthKey.split('-').map(Number)
+  const d = new Date(year, month - 1 + delta, 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+
+function getMonthKey(dateStr) {
+  return dateStr.slice(0, 7)
+}
+
+function getMonthLabel(monthKey) {
+  const [year, month] = monthKey.split('-').map(Number)
+  return new Date(year, month - 1, 1).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })
+}
+
+function isSunday(dateStr) {
+  return new Date(`${dateStr}T12:00:00`).getDay() === 0
+}
+
+function isSaturday(dateStr) {
+  return new Date(`${dateStr}T12:00:00`).getDay() === 6
+}
+
+function isWorkingDay(dateStr, extendedSchedule) {
+  return extendedSchedule ? true : !isSunday(dateStr)
+}
+
+function nextAllowedDate(dateStr, direction, extendedSchedule) {
+  let candidate = dateStr
+  do {
+    candidate = addDays(candidate, direction)
+  } while (!isWorkingDay(candidate, extendedSchedule))
+  return candidate
+}
+
+function normalizeDate(dateStr, extendedSchedule) {
+  if (isWorkingDay(dateStr, extendedSchedule)) return dateStr
+  return nextAllowedDate(dateStr, -1, extendedSchedule)
+}
+
+function buildMonthSummary(monthKey, sales, expenses) {
+  const salesTotal = sales.filter((s) => s.sale_date.startsWith(monthKey)).reduce((acc, item) => acc + item.total_sales, 0)
+  const expensesTotal = expenses.filter((e) => e.month_key === monthKey).reduce((acc, item) => acc + item.amount, 0)
+  const balance = salesTotal - expensesTotal
+  return {
+    salesTotal,
+    expensesTotal,
+    balance,
+    progress: MONTHLY_TARGET ? Math.round((salesTotal / MONTHLY_TARGET) * 100) : 0,
+  }
+}
+
+function LoginScreen({ onLogin }) {
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+
+  const submit = async (e) => {
+    e.preventDefault()
+    try {
+      const token = await apiFetch('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ username, password }),
+      })
+      localStorage.setItem('zapateria_token', token.access_token)
+      const me = await apiFetch('/api/auth/me')
+      onLogin(me)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  return (
+    <div className="shell center-screen">
+      <div className="login-card">
+        <div>
+          <p className="eyebrow">Zapatería</p>
+          <h1>Control de ventas y gastos</h1>
+          <p className="muted">Acceso online compartido con PostgreSQL, backend FastAPI y permisos por rol.</p>
+        </div>
+        <form onSubmit={submit} className="stack">
+          <label>
+            Usuario
+            <select value={username} onChange={(e) => setUsername(e.target.value)}>
+              <option value="">Selecciona un usuario</option>
+              <option value="Ivan">Iván</option>
+              <option value="Claudia">Claudia</option>
+              <option value="Tienda">Tienda</option>
+            </select>
+          </label>
+          <label>
+            Contraseña
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          </label>
+          {error ? <div className="error-box">{error}</div> : null}
+          <button type="submit">Entrar</button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+export default function App() {
+  const [user, setUser] = useState(null)
+  const [dailySales, setDailySales] = useState([])
+  const [monthlyExpenses, setMonthlyExpenses] = useState([])
+  const [settings, setSettings] = useState({ extended_schedule_enabled: false })
+  const [stats, setStats] = useState(null)
+  const [selectedDate, setSelectedDate] = useState(getTodayKey())
+  const [selectedMonth, setSelectedMonth] = useState(getMonthKey(getTodayKey()))
+  const [activeTab, setActiveTab] = useState('daily')
+  const [form, setForm] = useState({ morning_sales: '', afternoon_sales: '', customers: '' })
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+
+  const extendedSchedule = settings.extended_schedule_enabled
+
+  const selectedSale = useMemo(
+    () => dailySales.find((item) => item.sale_date === selectedDate),
+    [dailySales, selectedDate]
+  )
+
+  const viewedMonth = useMemo(
+    () => buildMonthSummary(selectedMonth, dailySales, monthlyExpenses),
+    [selectedMonth, dailySales, monthlyExpenses]
+  )
+
+  const todayMonth = getMonthKey(getTodayKey())
+  const currentMonthSummary = useMemo(
+    () => buildMonthSummary(todayMonth, dailySales, monthlyExpenses),
+    [todayMonth, dailySales, monthlyExpenses]
+  )
+
+  useEffect(() => {
+    const token = localStorage.getItem('zapateria_token')
+    if (!token) return
+    loadSession()
+  }, [])
+
+  useEffect(() => {
+    setSelectedDate((prev) => normalizeDate(prev, extendedSchedule))
+  }, [extendedSchedule])
+
+  useEffect(() => {
+    if (selectedSale) {
+      setForm({
+        morning_sales: selectedSale.morning_sales || '',
+        afternoon_sales: selectedSale.afternoon_sales || '',
+        customers: selectedSale.customers ?? '',
+      })
+    } else {
+      setForm({ morning_sales: '', afternoon_sales: '', customers: '' })
+    }
+  }, [selectedSale])
+
+  async function loadSession() {
+    try {
+      const me = await apiFetch('/api/auth/me')
+      setUser(me)
+      await Promise.all([loadBusinessData()])
+    } catch {
+      localStorage.removeItem('zapateria_token')
+      setUser(null)
+    }
+  }
+
+  async function loadBusinessData() {
+    const [sales, expenses, appSettings, dashboardStats] = await Promise.all([
+      apiFetch('/api/daily-sales'),
+      apiFetch('/api/monthly-expenses'),
+      apiFetch('/api/settings'),
+      apiFetch('/api/stats/dashboard'),
+    ])
+    setDailySales(sales)
+    setMonthlyExpenses(expenses)
+    setSettings(appSettings)
+    setStats(dashboardStats)
+  }
+
+  async function saveDay(e) {
+    e.preventDefault()
+    setMessage('')
+    setError('')
+    try {
+      const payload = {
+        sale_date: selectedDate,
+        morning_sales: Number(form.morning_sales || 0),
+        afternoon_sales: Number(isSaturday(selectedDate) && !extendedSchedule ? 0 : (form.afternoon_sales || 0)),
+        worked: !isSunday(selectedDate) || extendedSchedule,
+        customers: form.customers === '' ? null : Number(form.customers),
+        extended_schedule: extendedSchedule,
+      }
+      await apiFetch('/api/daily-sales', {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      })
+      await loadBusinessData()
+      setMessage('Día guardado correctamente.')
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function saveExpense(category, amount) {
+    setMessage('')
+    setError('')
+    try {
+      await apiFetch('/api/monthly-expenses', {
+        method: 'PUT',
+        body: JSON.stringify({ month_key: selectedMonth, category, amount: Number(amount || 0) }),
+      })
+      await loadBusinessData()
+      setMessage('Gasto actualizado correctamente.')
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function toggleExtendedSchedule(checked) {
+    try {
+      await apiFetch('/api/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ extended_schedule_enabled: checked }),
+      })
+      await loadBusinessData()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  function logout() {
+    localStorage.removeItem('zapateria_token')
+    setUser(null)
+  }
+
+  if (!user) {
+    return <LoginScreen onLogin={setUser} />
+  }
+
+  const isSaturdayAfternoonDisabled = isSaturday(selectedDate) && !extendedSchedule
+  const totalSales = Number(form.morning_sales || 0) + Number(isSaturdayAfternoonDisabled ? 0 : (form.afternoon_sales || 0))
+
+  return (
+    <div className="shell">
+      <header className="topbar">
+        <div>
+          <p className="eyebrow">Zapatería</p>
+          <h1>Control compartido de ventas y gastos</h1>
+          <p className="muted">Usuario: {user.display_name} · Rol: {user.role === 'admin' ? 'Administrador' : 'Tienda'}</p>
+        </div>
+        <button className="secondary" onClick={logout}>Salir</button>
+      </header>
+
+      {message ? <div className="success-box">{message}</div> : null}
+      {error ? <div className="error-box">{error}</div> : null}
+
+      <section className="stats-grid">
+        <div className="card"><span className="muted">Ventas día seleccionado</span><strong>{money(totalSales)}</strong></div>
+        <div className="card"><span className="muted">Ventas mes actual</span><strong>{money(currentMonthSummary.salesTotal)}</strong></div>
+        <div className="card"><span className="muted">Gastos mes actual</span><strong>{money(currentMonthSummary.expensesTotal)}</strong></div>
+        <div className="card"><span className="muted">Balance mes actual</span><strong>{money(currentMonthSummary.balance)}</strong></div>
+      </section>
+
+      <nav className="tabs">
+        <button className={activeTab === 'daily' ? 'active' : ''} onClick={() => setActiveTab('daily')}>Resumen diario</button>
+        {user.role === 'admin' ? <button className={activeTab === 'monthly' ? 'active' : ''} onClick={() => setActiveTab('monthly')}>Resumen mensual</button> : null}
+        {user.role === 'admin' ? <button className={activeTab === 'stats' ? 'active' : ''} onClick={() => setActiveTab('stats')}>Estadísticas</button> : null}
+      </nav>
+
+      {activeTab === 'daily' && (
+        <section className="two-columns">
+          <div className="card stack">
+            <h2>Registro de ventas por día</h2>
+            {user.role === 'admin' ? (
+              <label className="inline-checkbox">
+                <input
+                  type="checkbox"
+                  checked={extendedSchedule}
+                  onChange={(e) => toggleExtendedSchedule(e.target.checked)}
+                />
+                Habilitar horario extendido
+              </label>
+            ) : null}
+            <div className="toolbar">
+              <button className="secondary" onClick={() => setSelectedDate((prev) => nextAllowedDate(prev, -1, extendedSchedule))}>◀</button>
+              <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(normalizeDate(e.target.value, extendedSchedule))} />
+              <button className="secondary" onClick={() => setSelectedDate((prev) => nextAllowedDate(prev, 1, extendedSchedule))}>▶</button>
+              <button className="secondary" onClick={() => setSelectedDate(normalizeDate(getTodayKey(), extendedSchedule))}>Hoy</button>
+            </div>
+            {!extendedSchedule ? <p className="muted">Domingos cerrados y sábados por la tarde deshabilitados.</p> : null}
+            <form onSubmit={saveDay} className="grid-form">
+              <label>
+                Ventas mañana
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.morning_sales}
+                  onChange={(e) => setForm((prev) => ({ ...prev, morning_sales: e.target.value }))}
+                />
+              </label>
+              <label>
+                Ventas tarde
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  disabled={isSaturdayAfternoonDisabled}
+                  value={isSaturdayAfternoonDisabled ? '' : form.afternoon_sales}
+                  onChange={(e) => setForm((prev) => ({ ...prev, afternoon_sales: e.target.value }))}
+                />
+              </label>
+              <label>
+                Clientes
+                <input
+                  type="number"
+                  min="0"
+                  value={form.customers}
+                  onChange={(e) => setForm((prev) => ({ ...prev, customers: e.target.value }))}
+                />
+              </label>
+              <label>
+                Total ventas
+                <input type="text" readOnly value={money(totalSales)} />
+              </label>
+              <button type="submit">Guardar</button>
+            </form>
+          </div>
+
+          <div className="card stack">
+            <h2>Objetivo diario</h2>
+            <p className="muted">{formatDate(selectedDate)} · Meta: {money(DAILY_TARGET)}</p>
+            <div className="progress">
+              <div className="progress-bar" style={{ width: `${Math.min((totalSales / DAILY_TARGET) * 100, 100)}%` }} />
+            </div>
+            <p>{totalSales >= DAILY_TARGET ? 'Objetivo diario alcanzado' : `Faltan ${money(Math.max(DAILY_TARGET - totalSales, 0))}`}</p>
+            <div className="history-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Mañana</th>
+                    <th>Tarde</th>
+                    <th>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dailySales.slice().sort((a, b) => b.sale_date.localeCompare(a.sale_date)).map((item) => (
+                    <tr key={item.id}>
+                      <td>{formatDate(item.sale_date)}</td>
+                      <td>{money(item.morning_sales)}</td>
+                      <td>{money(item.afternoon_sales)}</td>
+                      <td>{money(item.total_sales)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {activeTab === 'monthly' && user.role === 'admin' && (
+        <section className="two-columns">
+          <div className="card stack">
+            <div className="toolbar">
+              <button className="secondary" onClick={() => setSelectedMonth((prev) => addMonths(prev, -1))}>◀</button>
+              <input type="month" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} />
+              <button className="secondary" onClick={() => setSelectedMonth((prev) => addMonths(prev, 1))}>▶</button>
+              <button className="secondary" onClick={() => setSelectedMonth(todayMonth)}>Mes actual</button>
+            </div>
+            <h2>Gastos del mes</h2>
+            {EXPENSE_CATEGORIES.map((category) => {
+              const item = monthlyExpenses.find((expense) => expense.month_key === selectedMonth && expense.category === category)
+              return (
+                <div key={category} className="expense-row">
+                  <span>{category}</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    defaultValue={item?.amount || ''}
+                    onBlur={(e) => saveExpense(category, e.target.value)}
+                  />
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="card stack">
+            <h2>Resultado del mes</h2>
+            <p>Mes: {getMonthLabel(selectedMonth)}</p>
+            <p>Facturación: <strong>{money(viewedMonth.salesTotal)}</strong></p>
+            <p>Gastos: <strong>{money(viewedMonth.expensesTotal)}</strong></p>
+            <p>Balance: <strong>{money(viewedMonth.balance)}</strong></p>
+            <div className="progress">
+              <div className="progress-bar green" style={{ width: `${Math.min(viewedMonth.progress, 100)}%` }} />
+            </div>
+            <p>Progreso mensual: {viewedMonth.progress}% de {money(MONTHLY_TARGET)}</p>
+          </div>
+        </section>
+      )}
+
+      {activeTab === 'stats' && user.role === 'admin' && stats && (
+        <section className="card stack">
+          <h2>Estadísticas</h2>
+          <div className="stats-grid">
+            <div className="mini-card"><span className="muted">% días con objetivo</span><strong>{stats.daily_target_rate}%</strong></div>
+            <div className="mini-card"><span className="muted">% meses con objetivo</span><strong>{stats.monthly_target_rate}%</strong></div>
+            <div className="mini-card"><span className="muted">Día más fuerte</span><strong>{stats.best_weekday}</strong></div>
+            <div className="mini-card"><span className="muted">Día más flojo</span><strong>{stats.worst_weekday}</strong></div>
+          </div>
+          <div className="history-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Mes</th>
+                  <th>Ventas</th>
+                  <th>Gastos</th>
+                  <th>Balance</th>
+                  <th>% objetivo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.monthly_summaries.map((item) => (
+                  <tr key={item.month_key}>
+                    <td>{getMonthLabel(item.month_key)}</td>
+                    <td>{money(item.sales_total)}</td>
+                    <td>{money(item.expenses_total)}</td>
+                    <td>{money(item.balance)}</td>
+                    <td>{item.target_progress_pct}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+    </div>
+  )
+}
