@@ -74,15 +74,100 @@ function normalizeDate(dateStr, extendedSchedule) {
 }
 
 function buildMonthSummary(monthKey, sales, expenses) {
-  const salesTotal = sales.filter((s) => s.sale_date.startsWith(monthKey)).reduce((acc, item) => acc + item.total_sales, 0)
-  const expensesTotal = expenses.filter((e) => e.month_key === monthKey).reduce((acc, item) => acc + item.amount, 0)
+  const salesTotal = sales
+    .filter((s) => s.sale_date.startsWith(monthKey))
+    .reduce((acc, item) => acc + item.total_sales, 0)
+
+  const expensesTotal = expenses
+    .filter((e) => e.month_key === monthKey)
+    .reduce((acc, item) => acc + item.amount, 0)
+
   const balance = salesTotal - expensesTotal
+
   return {
     salesTotal,
     expensesTotal,
     balance,
     progress: MONTHLY_TARGET ? Math.round((salesTotal / MONTHLY_TARGET) * 100) : 0,
   }
+}
+
+const rowStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '12px',
+  width: '100%',
+  flexWrap: 'nowrap',
+}
+
+const checkboxWrapStyle = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'flex-start',
+  width: '100%',
+  marginBottom: '16px',
+}
+
+const checkboxLabelStyle = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '10px',
+  cursor: 'pointer',
+  color: '#dbe7ff',
+  fontSize: '15px',
+  lineHeight: 1.2,
+  whiteSpace: 'nowrap',
+}
+
+const checkboxInputStyle = {
+  width: '18px',
+  height: '18px',
+  margin: 0,
+  accentColor: '#22d3ee',
+  flex: '0 0 auto',
+}
+
+const navButtonStyle = {
+  width: '48px',
+  minWidth: '48px',
+  height: '44px',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: 0,
+  flex: '0 0 auto',
+}
+
+const dateInputStyle = {
+  flex: '1 1 auto',
+  minWidth: '220px',
+  height: '44px',
+}
+
+const monthInputStyle = {
+  flex: '1 1 auto',
+  minWidth: '220px',
+  height: '44px',
+}
+
+const todayButtonStyle = {
+  minWidth: '90px',
+  height: '44px',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  whiteSpace: 'nowrap',
+  flex: '0 0 auto',
+}
+
+const currentMonthButtonStyle = {
+  minWidth: '120px',
+  height: '44px',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  whiteSpace: 'nowrap',
+  flex: '0 0 auto',
 }
 
 function LoginScreen({ onLogin }) {
@@ -273,7 +358,9 @@ export default function App() {
   }
 
   const isSaturdayAfternoonDisabled = isSaturday(selectedDate) && !extendedSchedule
-  const totalSales = Number(form.morning_sales || 0) + Number(isSaturdayAfternoonDisabled ? 0 : (form.afternoon_sales || 0))
+  const totalSales =
+    Number(form.morning_sales || 0) +
+    Number(isSaturdayAfternoonDisabled ? 0 : (form.afternoon_sales || 0))
 
   return (
     <div className="shell">
@@ -281,7 +368,9 @@ export default function App() {
         <div>
           <p className="eyebrow">Zapatería</p>
           <h1>Control compartido de ventas y gastos</h1>
-          <p className="muted">Usuario: {user.display_name} · Rol: {user.role === 'admin' ? 'Administrador' : 'Tienda'}</p>
+          <p className="muted">
+            Usuario: {user.display_name} · Rol: {user.role === 'admin' ? 'Administrador' : 'Tienda'}
+          </p>
         </div>
         <button className="secondary" onClick={logout}>Salir</button>
       </header>
@@ -298,61 +387,77 @@ export default function App() {
 
       <nav className="tabs">
         <button className={activeTab === 'daily' ? 'active' : ''} onClick={() => setActiveTab('daily')}>Resumen diario</button>
-        {user.role === 'admin' ? <button className={activeTab === 'monthly' ? 'active' : ''} onClick={() => setActiveTab('monthly')}>Resumen mensual</button> : null}
-        {user.role === 'admin' ? <button className={activeTab === 'stats' ? 'active' : ''} onClick={() => setActiveTab('stats')}>Estadísticas</button> : null}
+        {user.role === 'admin' ? (
+          <button className={activeTab === 'monthly' ? 'active' : ''} onClick={() => setActiveTab('monthly')}>
+            Resumen mensual
+          </button>
+        ) : null}
+        {user.role === 'admin' ? (
+          <button className={activeTab === 'stats' ? 'active' : ''} onClick={() => setActiveTab('stats')}>
+            Estadísticas
+          </button>
+        ) : null}
       </nav>
 
       {activeTab === 'daily' && (
         <section className="two-columns">
           <div className="card stack">
-            <h2>Registro de ventas por día</h2>           
-			{user.role === 'admin' ? (
-			  <div className="daily-top-row">
-				<label className="inline-checkbox compact-checkbox">
-				  <input
-					type="checkbox"
-					checked={extendedSchedule}
-					onChange={(e) => toggleExtendedSchedule(e.target.checked)}
-				  />
-				  <span>Habilitar horario extendido</span>
-				</label>
-			  </div>
-			) : null}
+            <h2>Registro de ventas por día</h2>
 
-			<div className="date-navigation">
-			  <button
-				type="button"
-				className="secondary nav-arrow"
-				onClick={() => setSelectedDate((prev) => nextAllowedDate(prev, -1, extendedSchedule))}
-			  >
-				◀
-			  </button>
+            {user.role === 'admin' ? (
+              <div style={checkboxWrapStyle}>
+                <label style={checkboxLabelStyle}>
+                  <input
+                    type="checkbox"
+                    style={checkboxInputStyle}
+                    checked={extendedSchedule}
+                    onChange={(e) => toggleExtendedSchedule(e.target.checked)}
+                  />
+                  <span>Habilitar horario extendido</span>
+                </label>
+              </div>
+            ) : null}
 
-			  <input
-				type="date"
-				className="date-input"
-				value={selectedDate}
-				onChange={(e) => setSelectedDate(normalizeDate(e.target.value, extendedSchedule))}
-			  />
+            <div style={{ ...rowStyle, marginBottom: '16px' }}>
+              <button
+                type="button"
+                className="secondary"
+                style={navButtonStyle}
+                onClick={() => setSelectedDate((prev) => nextAllowedDate(prev, -1, extendedSchedule))}
+              >
+                ◀
+              </button>
 
-			  <button
-				type="button"
-				className="secondary nav-arrow"
-				onClick={() => setSelectedDate((prev) => nextAllowedDate(prev, 1, extendedSchedule))}
-			  >
-				▶
-			  </button>
+              <input
+                type="date"
+                value={selectedDate}
+                style={dateInputStyle}
+                onChange={(e) => setSelectedDate(normalizeDate(e.target.value, extendedSchedule))}
+              />
 
-			  <button
-				type="button"
-				className="secondary today-button"
-				onClick={() => setSelectedDate(normalizeDate(getTodayKey(), extendedSchedule))}
-			  >
-				Hoy
-			  </button>
-			</div>
-			
-            {!extendedSchedule ? <p className="muted">Domingos cerrados y sábados por la tarde deshabilitados.</p> : null}
+              <button
+                type="button"
+                className="secondary"
+                style={navButtonStyle}
+                onClick={() => setSelectedDate((prev) => nextAllowedDate(prev, 1, extendedSchedule))}
+              >
+                ▶
+              </button>
+
+              <button
+                type="button"
+                className="secondary"
+                style={todayButtonStyle}
+                onClick={() => setSelectedDate(normalizeDate(getTodayKey(), extendedSchedule))}
+              >
+                Hoy
+              </button>
+            </div>
+
+            {!extendedSchedule ? (
+              <p className="muted">Domingos cerrados y sábados por la tarde deshabilitados.</p>
+            ) : null}
+
             <form onSubmit={saveDay} className="grid-form">
               <label>
                 Ventas mañana
@@ -410,14 +515,17 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {dailySales.slice().sort((a, b) => b.sale_date.localeCompare(a.sale_date)).map((item) => (
-                    <tr key={item.id}>
-                      <td>{formatDate(item.sale_date)}</td>
-                      <td>{money(item.morning_sales)}</td>
-                      <td>{money(item.afternoon_sales)}</td>
-                      <td>{money(item.total_sales)}</td>
-                    </tr>
-                  ))}
+                  {dailySales
+                    .slice()
+                    .sort((a, b) => b.sale_date.localeCompare(a.sale_date))
+                    .map((item) => (
+                      <tr key={item.id}>
+                        <td>{formatDate(item.sale_date)}</td>
+                        <td>{money(item.morning_sales)}</td>
+                        <td>{money(item.afternoon_sales)}</td>
+                        <td>{money(item.total_sales)}</td>
+                      </tr>
+                    ))}
                 </tbody>
               </table>
             </div>
@@ -428,15 +536,48 @@ export default function App() {
       {activeTab === 'monthly' && user.role === 'admin' && (
         <section className="two-columns">
           <div className="card stack">
-            <div className="toolbar">
-              <button className="secondary" onClick={() => setSelectedMonth((prev) => addMonths(prev, -1))}>◀</button>
-              <input type="month" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} />
-              <button className="secondary" onClick={() => setSelectedMonth((prev) => addMonths(prev, 1))}>▶</button>
-              <button className="secondary" onClick={() => setSelectedMonth(todayMonth)}>Mes actual</button>
+            <div style={{ ...rowStyle, marginBottom: '16px' }}>
+              <button
+                type="button"
+                className="secondary"
+                style={navButtonStyle}
+                onClick={() => setSelectedMonth((prev) => addMonths(prev, -1))}
+              >
+                ◀
+              </button>
+
+              <input
+                type="month"
+                value={selectedMonth}
+                style={monthInputStyle}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+              />
+
+              <button
+                type="button"
+                className="secondary"
+                style={navButtonStyle}
+                onClick={() => setSelectedMonth((prev) => addMonths(prev, 1))}
+              >
+                ▶
+              </button>
+
+              <button
+                type="button"
+                className="secondary"
+                style={currentMonthButtonStyle}
+                onClick={() => setSelectedMonth(todayMonth)}
+              >
+                Mes actual
+              </button>
             </div>
+
             <h2>Gastos del mes</h2>
             {EXPENSE_CATEGORIES.map((category) => {
-              const item = monthlyExpenses.find((expense) => expense.month_key === selectedMonth && expense.category === category)
+              const item = monthlyExpenses.find(
+                (expense) => expense.month_key === selectedMonth && expense.category === category
+              )
+
               return (
                 <div key={category} className="expense-row">
                   <span>{category}</span>
