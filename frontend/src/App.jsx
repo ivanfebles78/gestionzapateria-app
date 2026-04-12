@@ -305,23 +305,53 @@ export default function App() {
       {activeTab === 'daily' && (
         <section className="two-columns">
           <div className="card stack">
-            <h2>Registro de ventas por día</h2>
-            {user.role === 'admin' ? (
-              <label className="inline-checkbox">
-                <input
-                  type="checkbox"
-                  checked={extendedSchedule}
-                  onChange={(e) => toggleExtendedSchedule(e.target.checked)}
-                />
-                Habilitar horario extendido
-              </label>
-            ) : null}
-            <div className="toolbar">
-              <button className="secondary" onClick={() => setSelectedDate((prev) => nextAllowedDate(prev, -1, extendedSchedule))}>◀</button>
-              <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(normalizeDate(e.target.value, extendedSchedule))} />
-              <button className="secondary" onClick={() => setSelectedDate((prev) => nextAllowedDate(prev, 1, extendedSchedule))}>▶</button>
-              <button className="secondary" onClick={() => setSelectedDate(normalizeDate(getTodayKey(), extendedSchedule))}>Hoy</button>
-            </div>
+            <h2>Registro de ventas por día</h2>           
+			{user.role === 'admin' ? (
+			  <div className="daily-top-row">
+				<label className="inline-checkbox compact-checkbox">
+				  <input
+					type="checkbox"
+					checked={extendedSchedule}
+					onChange={(e) => toggleExtendedSchedule(e.target.checked)}
+				  />
+				  <span>Habilitar horario extendido</span>
+				</label>
+			  </div>
+			) : null}
+
+			<div className="date-navigation">
+			  <button
+				type="button"
+				className="secondary nav-arrow"
+				onClick={() => setSelectedDate((prev) => nextAllowedDate(prev, -1, extendedSchedule))}
+			  >
+				◀
+			  </button>
+
+			  <input
+				type="date"
+				className="date-input"
+				value={selectedDate}
+				onChange={(e) => setSelectedDate(normalizeDate(e.target.value, extendedSchedule))}
+			  />
+
+			  <button
+				type="button"
+				className="secondary nav-arrow"
+				onClick={() => setSelectedDate((prev) => nextAllowedDate(prev, 1, extendedSchedule))}
+			  >
+				▶
+			  </button>
+
+			  <button
+				type="button"
+				className="secondary today-button"
+				onClick={() => setSelectedDate(normalizeDate(getTodayKey(), extendedSchedule))}
+			  >
+				Hoy
+			  </button>
+			</div>
+			
             {!extendedSchedule ? <p className="muted">Domingos cerrados y sábados por la tarde deshabilitados.</p> : null}
             <form onSubmit={saveDay} className="grid-form">
               <label>

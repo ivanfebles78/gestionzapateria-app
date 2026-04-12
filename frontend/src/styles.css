@@ -79,3 +79,73 @@ th { color: #cbd5e1; font-weight: 600; }
 @media (max-width: 900px) {
   .stats-grid, .two-columns, .grid-form { grid-template-columns: 1fr; }
 }
+
+.daily-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin-bottom: 1rem;
+}
+
+.inline-checkbox.compact-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  cursor: pointer;
+  color: #dbe7ff;
+  font-size: 0.98rem;
+  line-height: 1.2;
+}
+
+.inline-checkbox.compact-checkbox input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #22d3ee;
+  flex: 0 0 auto;
+}
+
+.inline-checkbox.compact-checkbox span {
+  display: inline-block;
+}
+
+.date-navigation {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: nowrap;
+  margin-bottom: 1rem;
+}
+
+.date-navigation .date-input {
+  flex: 1 1 auto;
+  min-width: 220px;
+}
+
+.date-navigation .nav-arrow,
+.date-navigation .today-button {
+  flex: 0 0 auto;
+}
+
+.date-navigation .nav-arrow {
+  min-width: 48px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.date-navigation .today-button {
+  min-width: 74px;
+  height: 44px;
+}
+
+@media (max-width: 768px) {
+  .date-navigation {
+    flex-wrap: wrap;
+  }
+
+  .date-navigation .date-input {
+    min-width: 100%;
+  }
+}
