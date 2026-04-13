@@ -270,12 +270,6 @@ function LoginScreen({ onLogin }) {
 			  src="/logo-zapateria.png"
 			  alt="Logo"
 			  className="logo-img"
-			  style={{
-				width: '130px',
-				padding: '10px',
-				background: 'rgba(255,255,255,0.06)',
-				borderRadius: '16px',
-			  }}
 			/>
           <div style={{ textAlign: 'center' }}>
             <p className="eyebrow">Zapatería</p>

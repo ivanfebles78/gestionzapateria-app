@@ -601,11 +601,14 @@ th { color: #cbd5e1; font-weight: 600; }
 }
 
 /* === LOGO ANIMATION === */
+/* === LOGO CLEAN GLOW === */
 .logo-img {
+  width: 130px;
   transition: transform 0.3s ease, filter 0.3s ease;
+  filter: brightness(1.2) drop-shadow(0 0 12px rgba(0, 200, 255, 0.4));
 }
 
 .logo-img:hover {
   transform: scale(1.08);
-  filter: drop-shadow(0 0 12px rgba(0, 200, 255, 0.5));
+  filter: drop-shadow(0 0 18px rgba(0, 200, 255, 0.6));
 }
