@@ -109,6 +109,53 @@ function buildMonthSummary(monthKey, sales, expenses) {
   }
 }
 
+function buildMonthDailyRows(monthKey, sales, extendedSchedule) {
+  const [year, month] = monthKey.split('-').map(Number)
+  const daysInMonth = new Date(year, month, 0).getDate()
+  const salesMap = new Map(sales.map((item) => [item.sale_date, item]))
+
+  const rows = []
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+    if (!isWorkingDay(dateStr, extendedSchedule)) continue
+
+    const existing = salesMap.get(dateStr)
+    rows.push(
+      existing || {
+        id: `empty-${dateStr}`,
+        sale_date: dateStr,
+        morning_sales: 0,
+        afternoon_sales: 0,
+        total_sales: 0,
+      }
+    )
+  }
+
+  return rows.sort((a, b) => b.sale_date.localeCompare(a.sale_date))
+}
+
+function normalizeFormFromSale(sale) {
+  if (!sale) {
+    return {
+      morning_sales: '',
+      afternoon_sales: '',
+      customers: '',
+    }
+  }
+
+  return {
+    morning_sales: sale.morning_sales || '',
+    afternoon_sales: sale.afternoon_sales || '',
+    customers: sale.customers ?? '',
+  }
+}
+
+function formsEqual(a, b) {
+  return String(a.morning_sales ?? '') === String(b.morning_sales ?? '') &&
+    String(a.afternoon_sales ?? '') === String(b.afternoon_sales ?? '') &&
+    String(a.customers ?? '') === String(b.customers ?? '')
+}
+
 const rowStyle = {
   display: 'flex',
   alignItems: 'center',
@@ -247,6 +294,8 @@ export default function App() {
   const [changeLogs, setChangeLogs] = useState([])
   const [notificationPanelOpen, setNotificationPanelOpen] = useState(false)
   const [logsModalOpen, setLogsModalOpen] = useState(false)
+  const [pendingNavigation, setPendingNavigation] = useState(null)
+  const [showUnsavedModal, setShowUnsavedModal] = useState(false)
   const [selectedDate, setSelectedDate] = useState(getTodayKey())
   const [selectedMonth, setSelectedMonth] = useState(getMonthKey(getTodayKey()))
   const [activeTab, setActiveTab] = useState('daily')
@@ -275,7 +324,18 @@ export default function App() {
     [todayMonth, dailySales, monthlyExpenses]
   )
 
+  const visibleDailyRows = useMemo(
+    () => buildMonthDailyRows(getMonthKey(selectedDate), dailySales, extendedSchedule),
+    [selectedDate, dailySales, extendedSchedule]
+  )
+
   const unreadNotifications = notifications.filter((item) => !item.is_read)
+  const initialForm = useMemo(() => normalizeFormFromSale(selectedSale), [selectedSale])
+  const hasUnsavedChanges = isEditing && !formsEqual(form, initialForm)
+  const isExistingSavedRecord = Boolean(selectedSale)
+  const editButtonLabel = isExistingSavedRecord && isEditing ? 'Cancelar' : 'Editar'
+  const editButtonDisabled = !isExistingSavedRecord
+  const saveButtonDisabled = isExistingSavedRecord && !isEditing
 
   useEffect(() => {
     const token = localStorage.getItem('zapateria_token')
@@ -288,18 +348,14 @@ export default function App() {
   }, [extendedSchedule])
 
   useEffect(() => {
+    setForm(initialForm)
+    setIsEditing(!selectedSale)
     if (selectedSale) {
-      setForm({
-        morning_sales: selectedSale.morning_sales || '',
-        afternoon_sales: selectedSale.afternoon_sales || '',
-        customers: selectedSale.customers ?? '',
-      })
       setIsEditing(!selectedSale.is_locked)
     } else {
-      setForm({ morning_sales: '', afternoon_sales: '', customers: '' })
       setIsEditing(true)
     }
-  }, [selectedSale])
+  }, [initialForm, selectedSale])
 
   useEffect(() => {
     function handleOutsideClick(event) {
@@ -330,10 +386,11 @@ export default function App() {
     function onKeyDown(event) {
       if (event.key === 'Escape') {
         setLogsModalOpen(false)
+        setShowUnsavedModal(false)
       }
     }
 
-    if (logsModalOpen) {
+    if (logsModalOpen || showUnsavedModal) {
       document.addEventListener('keydown', onKeyDown)
       document.body.style.overflow = 'hidden'
     }
@@ -342,7 +399,7 @@ export default function App() {
       document.removeEventListener('keydown', onKeyDown)
       document.body.style.overflow = ''
     }
-  }, [logsModalOpen])
+  }, [logsModalOpen, showUnsavedModal])
 
   async function loadSession() {
     try {
@@ -382,7 +439,7 @@ export default function App() {
   }
 
   async function saveDay(e) {
-    e.preventDefault()
+    if (e) e.preventDefault()
     setMessage('')
     setError('')
 
@@ -404,8 +461,10 @@ export default function App() {
       await loadBusinessData(user)
       setIsEditing(false)
       setMessage(selectedSale ? 'Día actualizado correctamente.' : 'Día guardado correctamente.')
+      return true
     } catch (err) {
       setError(err.message)
+      return false
     }
   }
 
@@ -426,12 +485,7 @@ export default function App() {
 
   function cancelEdit() {
     if (!selectedSale) return
-
-    setForm({
-      morning_sales: selectedSale.morning_sales || '',
-      afternoon_sales: selectedSale.afternoon_sales || '',
-      customers: selectedSale.customers ?? '',
-    })
+    setForm(initialForm)
     setIsEditing(false)
     setMessage('Edición cancelada.')
     setError('')
@@ -514,6 +568,29 @@ export default function App() {
     XLSX.writeFile(workbook, 'logs_zapateria.xlsx')
   }
 
+  function executePendingNavigation() {
+    if (!pendingNavigation) return
+    pendingNavigation()
+    setPendingNavigation(null)
+    setShowUnsavedModal(false)
+  }
+
+  function requestNavigation(action) {
+    if (hasUnsavedChanges) {
+      setPendingNavigation(() => action)
+      setShowUnsavedModal(true)
+      return
+    }
+    action()
+  }
+
+  async function handleSaveAndNavigate() {
+    const ok = await saveDay()
+    if (ok) {
+      executePendingNavigation()
+    }
+  }
+
   function logout() {
     localStorage.removeItem('zapateria_token')
     setUser(null)
@@ -525,10 +602,6 @@ export default function App() {
 
   const isSaturdayAfternoonDisabled = isSaturday(selectedDate) && !extendedSchedule
   const totalSales = Number(form.morning_sales || 0) + Number(isSaturdayAfternoonDisabled ? 0 : (form.afternoon_sales || 0))
-  const isExistingSavedRecord = Boolean(selectedSale)
-  const editButtonLabel = isExistingSavedRecord && isEditing ? 'Cancelar' : 'Editar'
-  const editButtonDisabled = !isExistingSavedRecord
-  const saveButtonDisabled = !isEditing
 
   return (
     <>
@@ -657,9 +730,9 @@ export default function App() {
         </section>
 
         <nav className="tabs">
-          <button className={activeTab === 'daily' ? 'active' : ''} onClick={() => setActiveTab('daily')}>Resumen diario</button>
-          {user.role === 'admin' ? <button className={activeTab === 'monthly' ? 'active' : ''} onClick={() => setActiveTab('monthly')}>Resumen mensual</button> : null}
-          {user.role === 'admin' ? <button className={activeTab === 'stats' ? 'active' : ''} onClick={() => setActiveTab('stats')}>Estadísticas</button> : null}
+          <button className={activeTab === 'daily' ? 'active' : ''} onClick={() => requestNavigation(() => setActiveTab('daily'))}>Resumen diario</button>
+          {user.role === 'admin' ? <button className={activeTab === 'monthly' ? 'active' : ''} onClick={() => requestNavigation(() => setActiveTab('monthly'))}>Resumen mensual</button> : null}
+          {user.role === 'admin' ? <button className={activeTab === 'stats' ? 'active' : ''} onClick={() => requestNavigation(() => setActiveTab('stats'))}>Estadísticas</button> : null}
           {user.role === 'admin' ? (
             <button type="button" onClick={() => setLogsModalOpen(true)}>Logs</button>
           ) : null}
@@ -689,7 +762,11 @@ export default function App() {
                   type="button"
                   className="secondary"
                   style={navButtonStyle}
-                  onClick={() => setSelectedDate((prev) => nextAllowedDate(prev, -1, extendedSchedule))}
+                  onClick={() =>
+                    requestNavigation(() =>
+                      setSelectedDate((prev) => nextAllowedDate(prev, -1, extendedSchedule))
+                    )
+                  }
                 >
                   ◀
                 </button>
@@ -698,14 +775,22 @@ export default function App() {
                   type="date"
                   value={selectedDate}
                   style={dateInputStyle}
-                  onChange={(e) => setSelectedDate(normalizeDate(e.target.value, extendedSchedule))}
+                  onChange={(e) =>
+                    requestNavigation(() =>
+                      setSelectedDate(normalizeDate(e.target.value, extendedSchedule))
+                    )
+                  }
                 />
 
                 <button
                   type="button"
                   className="secondary"
                   style={navButtonStyle}
-                  onClick={() => setSelectedDate((prev) => nextAllowedDate(prev, 1, extendedSchedule))}
+                  onClick={() =>
+                    requestNavigation(() =>
+                      setSelectedDate((prev) => nextAllowedDate(prev, 1, extendedSchedule))
+                    )
+                  }
                 >
                   ▶
                 </button>
@@ -714,7 +799,11 @@ export default function App() {
                   type="button"
                   className="secondary"
                   style={todayButtonStyle}
-                  onClick={() => setSelectedDate(normalizeDate(getTodayKey(), extendedSchedule))}
+                  onClick={() =>
+                    requestNavigation(() =>
+                      setSelectedDate(normalizeDate(getTodayKey(), extendedSchedule))
+                    )
+                  }
                 >
                   Hoy
                 </button>
@@ -812,7 +901,7 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {dailySales.slice().sort((a, b) => b.sale_date.localeCompare(a.sale_date)).map((item) => {
+                    {visibleDailyRows.map((item) => {
                       const missedTarget = item.total_sales < DAILY_TARGET
                       return (
                         <tr
@@ -848,7 +937,7 @@ export default function App() {
                   type="button"
                   className="secondary"
                   style={navButtonStyle}
-                  onClick={() => setSelectedMonth((prev) => addMonths(prev, -1))}
+                  onClick={() => requestNavigation(() => setSelectedMonth((prev) => addMonths(prev, -1)))}
                 >
                   ◀
                 </button>
@@ -857,14 +946,14 @@ export default function App() {
                   type="month"
                   value={selectedMonth}
                   style={monthInputStyle}
-                  onChange={(e) => setSelectedMonth(e.target.value)}
+                  onChange={(e) => requestNavigation(() => setSelectedMonth(e.target.value))}
                 />
 
                 <button
                   type="button"
                   className="secondary"
                   style={navButtonStyle}
-                  onClick={() => setSelectedMonth((prev) => addMonths(prev, 1))}
+                  onClick={() => requestNavigation(() => setSelectedMonth((prev) => addMonths(prev, 1)))}
                 >
                   ▶
                 </button>
@@ -873,7 +962,7 @@ export default function App() {
                   type="button"
                   className="secondary"
                   style={currentMonthButtonStyle}
-                  onClick={() => setSelectedMonth(todayMonth)}
+                  onClick={() => requestNavigation(() => setSelectedMonth(todayMonth))}
                 >
                   Mes actual
                 </button>
@@ -1027,6 +1116,41 @@ export default function App() {
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showUnsavedModal ? (
+        <div className="modal-backdrop" onClick={() => setShowUnsavedModal(false)}>
+          <div className="modal-panel" style={{ width: 'min(520px, 92vw)' }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2 style={{ marginBottom: '4px' }}>Guardar los cambios?</h2>
+                <p className="muted" style={{ margin: 0 }}>
+                  Tienes cambios sin guardar. Puedes guardarlos o cancelar la navegación.
+                </p>
+              </div>
+            </div>
+
+            <div style={{ padding: '0 22px 22px 22px', display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => {
+                  setPendingNavigation(null)
+                  setShowUnsavedModal(false)
+                }}
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSaveAndNavigate}
+              >
+                Guardar
+              </button>
             </div>
           </div>
         </div>
