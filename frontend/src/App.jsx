@@ -403,7 +403,7 @@ export default function App() {
 
       await loadBusinessData(user)
       setIsEditing(false)
-      setMessage('Día guardado correctamente.')
+      setMessage(selectedSale ? 'Día actualizado correctamente.' : 'Día guardado correctamente.')
     } catch (err) {
       setError(err.message)
     }
@@ -422,6 +422,19 @@ export default function App() {
     } catch (err) {
       setError(err.message)
     }
+  }
+
+  function cancelEdit() {
+    if (!selectedSale) return
+
+    setForm({
+      morning_sales: selectedSale.morning_sales || '',
+      afternoon_sales: selectedSale.afternoon_sales || '',
+      customers: selectedSale.customers ?? '',
+    })
+    setIsEditing(false)
+    setMessage('Edición cancelada.')
+    setError('')
   }
 
   async function saveExpense(category, amount) {
@@ -485,12 +498,12 @@ export default function App() {
         const total = Number(item.morning_sales || 0) + Number(item.afternoon_sales || 0)
         return {
           'Fecha y hora': formatDateTime(item.changed_at),
-          'Usuario': item.changed_by_display_name,
-          'Día': formatDate(item.sale_date),
-          'Acción': item.action === 'create' ? 'Create' : 'Update',
+          Usuario: item.changed_by_display_name,
+          Día: formatDate(item.sale_date),
+          Acción: item.action === 'create' ? 'Create' : 'Update',
           'Ventas mañana': Number(item.morning_sales || 0),
           'Ventas tarde': Number(item.afternoon_sales || 0),
-          'Clientes': item.customers ?? '',
+          Clientes: item.customers ?? '',
           'Total ventas': total,
         }
       })
@@ -512,6 +525,10 @@ export default function App() {
 
   const isSaturdayAfternoonDisabled = isSaturday(selectedDate) && !extendedSchedule
   const totalSales = Number(form.morning_sales || 0) + Number(isSaturdayAfternoonDisabled ? 0 : (form.afternoon_sales || 0))
+  const isExistingSavedRecord = Boolean(selectedSale)
+  const editButtonLabel = isExistingSavedRecord && isEditing ? 'Cancelar' : 'Editar'
+  const editButtonDisabled = !isExistingSavedRecord
+  const saveButtonDisabled = !isEditing
 
   return (
     <>
@@ -747,14 +764,21 @@ export default function App() {
                 </label>
 
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-                  <button type="submit" disabled={!isEditing}>Guardar</button>
+                  <button type="submit" disabled={saveButtonDisabled}>Guardar</button>
                   <button
                     type="button"
                     className="secondary"
-                    onClick={unlockForEdit}
-                    disabled={!selectedSale || isEditing}
+                    onClick={() => {
+                      if (!isExistingSavedRecord) return
+                      if (isEditing) {
+                        cancelEdit()
+                      } else {
+                        unlockForEdit()
+                      }
+                    }}
+                    disabled={editButtonDisabled}
                   >
-                    Editar
+                    {editButtonLabel}
                   </button>
                 </div>
               </form>
