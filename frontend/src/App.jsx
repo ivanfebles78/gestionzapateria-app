@@ -333,8 +333,8 @@ export default function App() {
   const initialForm = useMemo(() => normalizeFormFromSale(selectedSale), [selectedSale])
   const hasUnsavedChanges = isEditing && !formsEqual(form, initialForm)
   const isExistingSavedRecord = Boolean(selectedSale)
+  const showEditButton = isExistingSavedRecord
   const editButtonLabel = isExistingSavedRecord && isEditing ? 'Cancelar' : 'Editar'
-  const editButtonDisabled = !isExistingSavedRecord
   const saveButtonDisabled = isExistingSavedRecord && !isEditing
 
   useEffect(() => {
@@ -853,23 +853,24 @@ export default function App() {
                 </label>
 
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-                  <button type="submit" disabled={saveButtonDisabled}>Guardar</button>
-                  <button
-                    type="button"
-                    className="secondary"
-                    onClick={() => {
-                      if (!isExistingSavedRecord) return
-                      if (isEditing) {
-                        cancelEdit()
-                      } else {
-                        unlockForEdit()
-                      }
-                    }}
-                    disabled={editButtonDisabled}
-                  >
-                    {editButtonLabel}
-                  </button>
-                </div>
+				  <button type="submit" disabled={saveButtonDisabled}>Guardar</button>
+
+				  {showEditButton ? (
+					<button
+					  type="button"
+					  className="secondary"
+					  onClick={() => {
+						if (isEditing) {
+						  cancelEdit()
+						} else {
+						  unlockForEdit()
+						}
+					  }}
+					>
+					  {editButtonLabel}
+					</button>
+				  ) : null}
+				</div>
               </form>
             </div>
 
