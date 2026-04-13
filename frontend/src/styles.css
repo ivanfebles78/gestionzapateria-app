@@ -599,3 +599,13 @@ th { color: #cbd5e1; font-weight: 600; }
   background: rgba(220, 38, 38, 0.18);
   border: 1px solid rgba(220, 38, 38, 0.3);
 }
+
+/* === LOGO ANIMATION === */
+.logo-img {
+  transition: transform 0.3s ease, filter 0.3s ease;
+}
+
+.logo-img:hover {
+  transform: scale(1.08);
+  filter: drop-shadow(0 0 12px rgba(0, 200, 255, 0.5));
+}
