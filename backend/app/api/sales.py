@@ -65,7 +65,6 @@ def create_sale_log(
     )
     db.add(log)
 
-
 def create_admin_notification(
     db: Session,
     *,
@@ -123,14 +122,16 @@ def list_daily_sales(
 
 @router.put('/daily-sales', response_model=DailySaleRead)
 def upsert_daily_sale(
-    from datetime import date
-    
     payload: DailySaleUpsert,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-    if payload.sale_date > date.today():
-        raise HTTPException(status_code=400, detail='No se pueden registrar ventas para fechas futuras')
 ):
+    if payload.sale_date > date.today():
+        raise HTTPException(
+            status_code=400,
+            detail='No se pueden registrar ventas para fechas futuras',
+        )
+
     sale = db.query(DailySale).filter(DailySale.sale_date == payload.sale_date).first()
     already_existed = sale is not None
 
