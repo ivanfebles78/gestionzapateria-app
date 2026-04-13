@@ -271,7 +271,10 @@ function LoginScreen({ onLogin }) {
 			  alt="Logo"
 			  style={{
 				width: '120px',
-				filter: 'drop-shadow(0 0 12px rgba(0, 200, 255, 0.6))',
+				padding: '10px',
+				background: 'rgba(255,255,255,0.06)',
+				borderRadius: '16px',
+				boxShadow: '0 0 20px rgba(0,200,255,0.25)',
 			  }}
 			/>
           <div style={{ textAlign: 'center' }}>
