@@ -59,6 +59,14 @@ function clampToToday(dateStr) {
   return isFutureDate(dateStr) ? getTodayKey() : dateStr
 }
 
+function isFutureMonth(monthKey) {
+  return monthKey > getMonthKey(getTodayKey())
+}
+
+function clampToCurrentMonth(monthKey) {
+  return isFutureMonth(monthKey) ? getMonthKey(getTodayKey()) : monthKey
+}
+
 function addDays(dateStr, days) {
   const d = new Date(`${dateStr}T12:00:00`)
   d.setDate(d.getDate() + days)
@@ -374,6 +382,10 @@ export default function App() {
       setIsEditing(true)
     }
   }, [initialForm, selectedSale])
+  
+  useEffect(() => {
+	  setSelectedMonth((prev) => clampToCurrentMonth(prev))
+	}, [])
 
   useEffect(() => {
     function handleOutsideClick(event) {
@@ -420,20 +432,28 @@ export default function App() {
   }, [logsModalOpen, showUnsavedModal])
 
   async function loadSession() {
-    try {
-      const me = await apiFetch('/api/auth/me')
-      setUser(me)
-      await loadBusinessData(me)
-    } catch {
-      localStorage.removeItem('zapateria_token')
-      setUser(null)
-    }
-  }
+	  try {
+		const me = await apiFetch('/api/auth/me')
+		const today = getTodayKey()
+		setSelectedDate(today)
+		setSelectedMonth(getMonthKey(today))
+		setActiveTab('daily')
+		setUser(me)
+		await loadBusinessData(me)
+	  } catch {
+		localStorage.removeItem('zapateria_token')
+		setUser(null)
+	  }
+	}
   
-  async function handleLogin(me) {
-  setUser(me)
-  await loadBusinessData(me)
-}
+	async function handleLogin(me) {
+	  const today = getTodayKey()
+	  setSelectedDate(today)
+	  setSelectedMonth(getMonthKey(today))
+	  setActiveTab('daily')
+	  setUser(me)
+	  await loadBusinessData(me)
+	}
 
   async function loadBusinessData(currentUser = user) {
     const [sales, expenses, appSettings, dashboardStats] = await Promise.all([
@@ -752,11 +772,30 @@ export default function App() {
         ) : null}
 
         <section className="stats-grid">
-          <div className="card"><span className="muted">Ventas día seleccionado</span><strong>{money(totalSales)}</strong></div>
-          <div className="card"><span className="muted">Ventas mes actual</span><strong>{money(currentMonthSummary.salesTotal)}</strong></div>
-          <div className="card"><span className="muted">Gastos mes actual</span><strong>{money(currentMonthSummary.expensesTotal)}</strong></div>
-          <div className="card"><span className="muted">Balance mes actual</span><strong>{money(currentMonthSummary.balance)}</strong></div>
-        </section>
+		  <div className="card">
+			<span className="muted">Ventas día seleccionado</span>
+			<strong>{money(totalSales)}</strong>
+		  </div>
+
+		  <div className="card">
+			<span className="muted">Ventas mes actual</span>
+			<strong>{money(currentMonthSummary.salesTotal)}</strong>
+		  </div>
+
+		  {user.role === 'admin' ? (
+			<>
+			  <div className="card">
+				<span className="muted">Gastos mes actual</span>
+				<strong>{money(currentMonthSummary.expensesTotal)}</strong>
+			  </div>
+
+			  <div className="card">
+				<span className="muted">Balance mes actual</span>
+				<strong>{money(currentMonthSummary.balance)}</strong>
+			  </div>
+			</>
+		  ) : null}
+		</section>
 
         <nav className="tabs">
           <button className={activeTab === 'daily' ? 'active' : ''} onClick={() => requestNavigation(() => setActiveTab('daily'))}>Resumen diario</button>
@@ -986,29 +1025,45 @@ export default function App() {
                 </button>
 
                 <input
-                  type="month"
-                  value={selectedMonth}
-                  style={monthInputStyle}
-                  onChange={(e) => requestNavigation(() => setSelectedMonth(e.target.value))}
-                />
+				  type="month"
+				  value={selectedMonth}
+				  style={monthInputStyle}
+				  max={getMonthKey(getTodayKey())}
+				  onChange={(e) =>
+					requestNavigation(() => {
+					  const rawMonth = e.target.value
+					  if (isFutureMonth(rawMonth)) {
+						setError('No se puede seleccionar un mes futuro.')
+						setSelectedMonth(getMonthKey(getTodayKey()))
+						return
+					  }
+					  setSelectedMonth(rawMonth)
+					})
+				  }
+				/>
 
                 <button
-                  type="button"
-                  className="secondary"
-                  style={navButtonStyle}
-                  onClick={() => requestNavigation(() => setSelectedMonth((prev) => addMonths(prev, 1)))}
-                >
-                  ▶
-                </button>
+				  type="button"
+				  className="secondary"
+				  style={navButtonStyle}
+				  disabled={selectedMonth >= getMonthKey(getTodayKey())}
+				  onClick={() =>
+					requestNavigation(() =>
+					  setSelectedMonth((prev) => clampToCurrentMonth(addMonths(prev, 1)))
+					)
+				  }
+				>
+				  ▶
+				</button>
 
                 <button
-                  type="button"
-                  className="secondary"
-                  style={currentMonthButtonStyle}
-                  onClick={() => requestNavigation(() => setSelectedMonth(todayMonth))}
-                >
-                  Mes actual
-                </button>
+				  type="button"
+				  className="secondary"
+				  style={currentMonthButtonStyle}
+				  onClick={() => requestNavigation(() => setSelectedMonth(getMonthKey(getTodayKey())))}
+				>
+				  Mes actual
+				</button>
               </div>
 
               <h2>Gastos del mes</h2>

@@ -272,6 +272,8 @@ def list_change_logs(
 def dashboard_stats(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     daily_sales = db.query(DailySale).order_by(DailySale.sale_date.asc()).all()
     expenses = db.query(MonthlyExpense).all()
+    settings = get_or_create_settings(db)
+    extended_schedule_enabled = settings.extended_schedule_enabled
 
     monthly_sales_map: dict[str, float] = defaultdict(float)
     weekday_totals: dict[str, float] = defaultdict(float)
@@ -293,7 +295,18 @@ def dashboard_stats(db: Session = Depends(get_db), user: User = Depends(get_curr
             'sunday': 'domingo',
         }.get(weekday, weekday)
 
-        weekday_totals[weekday_es] += sale.total_sales
+        sale_total_for_weekday = sale.total_sales
+
+        # Si el horario ampliado NO está habilitado:
+        # - no contar domingos
+        # - el sábado por la tarde no debe influir
+        if not extended_schedule_enabled:
+            if weekday_es == 'domingo':
+                continue
+            if weekday_es == 'sábado':
+                sale_total_for_weekday = sale.morning_sales
+
+        weekday_totals[weekday_es] += sale_total_for_weekday
 
         if sale.total_sales >= DAILY_TARGET:
             daily_target_hits += 1
