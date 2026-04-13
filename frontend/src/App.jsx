@@ -22,6 +22,10 @@ function formatDate(dateString) {
   return new Date(`${dateString}T12:00:00`).toLocaleDateString('es-ES')
 }
 
+function formatDateTime(value) {
+  return new Date(value).toLocaleString('es-ES')
+}
+
 function getTodayKey() {
   const d = new Date()
   return d.toISOString().slice(0, 10)
@@ -74,16 +78,9 @@ function normalizeDate(dateStr, extendedSchedule) {
 }
 
 function buildMonthSummary(monthKey, sales, expenses) {
-  const salesTotal = sales
-    .filter((s) => s.sale_date.startsWith(monthKey))
-    .reduce((acc, item) => acc + item.total_sales, 0)
-
-  const expensesTotal = expenses
-    .filter((e) => e.month_key === monthKey)
-    .reduce((acc, item) => acc + item.amount, 0)
-
+  const salesTotal = sales.filter((s) => s.sale_date.startsWith(monthKey)).reduce((acc, item) => acc + item.total_sales, 0)
+  const expensesTotal = expenses.filter((e) => e.month_key === monthKey).reduce((acc, item) => acc + item.amount, 0)
   const balance = salesTotal - expensesTotal
-
   return {
     salesTotal,
     expensesTotal,
@@ -226,12 +223,16 @@ export default function App() {
   const [monthlyExpenses, setMonthlyExpenses] = useState([])
   const [settings, setSettings] = useState({ extended_schedule_enabled: false })
   const [stats, setStats] = useState(null)
+  const [notifications, setNotifications] = useState([])
+  const [changeLogs, setChangeLogs] = useState([])
+  const [notificationPanelOpen, setNotificationPanelOpen] = useState(false)
   const [selectedDate, setSelectedDate] = useState(getTodayKey())
   const [selectedMonth, setSelectedMonth] = useState(getMonthKey(getTodayKey()))
   const [activeTab, setActiveTab] = useState('daily')
   const [form, setForm] = useState({ morning_sales: '', afternoon_sales: '', customers: '' })
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [isEditing, setIsEditing] = useState(true)
 
   const extendedSchedule = settings.extended_schedule_enabled
 
@@ -251,6 +252,8 @@ export default function App() {
     [todayMonth, dailySales, monthlyExpenses]
   )
 
+  const unreadNotifications = notifications.filter((item) => !item.is_read)
+
   useEffect(() => {
     const token = localStorage.getItem('zapateria_token')
     if (!token) return
@@ -268,8 +271,10 @@ export default function App() {
         afternoon_sales: selectedSale.afternoon_sales || '',
         customers: selectedSale.customers ?? '',
       })
+      setIsEditing(!selectedSale.is_locked)
     } else {
       setForm({ morning_sales: '', afternoon_sales: '', customers: '' })
+      setIsEditing(true)
     }
   }, [selectedSale])
 
@@ -277,30 +282,44 @@ export default function App() {
     try {
       const me = await apiFetch('/api/auth/me')
       setUser(me)
-      await Promise.all([loadBusinessData()])
+      await loadBusinessData(me)
     } catch {
       localStorage.removeItem('zapateria_token')
       setUser(null)
     }
   }
 
-  async function loadBusinessData() {
+  async function loadBusinessData(currentUser = user) {
     const [sales, expenses, appSettings, dashboardStats] = await Promise.all([
       apiFetch('/api/daily-sales'),
       apiFetch('/api/monthly-expenses'),
       apiFetch('/api/settings'),
       apiFetch('/api/stats/dashboard'),
     ])
+
     setDailySales(sales)
     setMonthlyExpenses(expenses)
     setSettings(appSettings)
     setStats(dashboardStats)
+
+    if (currentUser?.role === 'admin') {
+      const [adminNotifications, logs] = await Promise.all([
+        apiFetch('/api/admin/notifications?limit=20'),
+        apiFetch('/api/admin/change-logs?limit=50'),
+      ])
+      setNotifications(adminNotifications)
+      setChangeLogs(logs)
+    } else {
+      setNotifications([])
+      setChangeLogs([])
+    }
   }
 
   async function saveDay(e) {
     e.preventDefault()
     setMessage('')
     setError('')
+
     try {
       const payload = {
         sale_date: selectedDate,
@@ -310,12 +329,30 @@ export default function App() {
         customers: form.customers === '' ? null : Number(form.customers),
         extended_schedule: extendedSchedule,
       }
+
       await apiFetch('/api/daily-sales', {
         method: 'PUT',
         body: JSON.stringify(payload),
       })
-      await loadBusinessData()
+
+      await loadBusinessData(user)
+      setIsEditing(false)
       setMessage('Día guardado correctamente.')
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function unlockForEdit() {
+    setMessage('')
+    setError('')
+    try {
+      await apiFetch(`/api/daily-sales/${selectedDate}/unlock`, {
+        method: 'POST',
+      })
+      await loadBusinessData(user)
+      setIsEditing(true)
+      setMessage('Modo edición activado.')
     } catch (err) {
       setError(err.message)
     }
@@ -329,7 +366,7 @@ export default function App() {
         method: 'PUT',
         body: JSON.stringify({ month_key: selectedMonth, category, amount: Number(amount || 0) }),
       })
-      await loadBusinessData()
+      await loadBusinessData(user)
       setMessage('Gasto actualizado correctamente.')
     } catch (err) {
       setError(err.message)
@@ -342,7 +379,18 @@ export default function App() {
         method: 'PUT',
         body: JSON.stringify({ extended_schedule_enabled: checked }),
       })
-      await loadBusinessData()
+      await loadBusinessData(user)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function markNotificationAsRead(notificationId) {
+    try {
+      await apiFetch(`/api/admin/notifications/${notificationId}/read`, {
+        method: 'POST',
+      })
+      await loadBusinessData(user)
     } catch (err) {
       setError(err.message)
     }
@@ -358,9 +406,7 @@ export default function App() {
   }
 
   const isSaturdayAfternoonDisabled = isSaturday(selectedDate) && !extendedSchedule
-  const totalSales =
-    Number(form.morning_sales || 0) +
-    Number(isSaturdayAfternoonDisabled ? 0 : (form.afternoon_sales || 0))
+  const totalSales = Number(form.morning_sales || 0) + Number(isSaturdayAfternoonDisabled ? 0 : (form.afternoon_sales || 0))
 
   return (
     <div className="shell">
@@ -372,7 +418,104 @@ export default function App() {
             Usuario: {user.display_name} · Rol: {user.role === 'admin' ? 'Administrador' : 'Tienda'}
           </p>
         </div>
-        <button className="secondary" onClick={logout}>Salir</button>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' }}>
+          {user.role === 'admin' ? (
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setNotificationPanelOpen((prev) => !prev)}
+              style={{ position: 'relative', minWidth: '54px' }}
+              title="Notificaciones"
+            >
+              🔔
+              {unreadNotifications.length > 0 ? (
+                <span
+                  style={{
+                    position: 'absolute',
+                    top: '-6px',
+                    right: '-6px',
+                    background: '#ef4444',
+                    color: '#fff',
+                    borderRadius: '999px',
+                    fontSize: '11px',
+                    minWidth: '20px',
+                    height: '20px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '0 6px',
+                  }}
+                >
+                  {unreadNotifications.length}
+                </span>
+              ) : null}
+            </button>
+          ) : null}
+
+          <button className="secondary" onClick={logout}>Salir</button>
+
+          {user.role === 'admin' && notificationPanelOpen ? (
+            <div
+              style={{
+                position: 'absolute',
+                top: '56px',
+                right: 0,
+                width: '380px',
+                maxHeight: '420px',
+                overflowY: 'auto',
+                background: '#0f172a',
+                border: '1px solid rgba(148,163,184,0.25)',
+                borderRadius: '16px',
+                padding: '14px',
+                boxShadow: '0 20px 45px rgba(0,0,0,0.35)',
+                zIndex: 20,
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <strong>Notificaciones</strong>
+                <span className="muted">{unreadNotifications.length} sin leer</span>
+              </div>
+
+              {notifications.length === 0 ? (
+                <p className="muted">No hay notificaciones.</p>
+              ) : (
+                notifications.map((item) => (
+                  <div
+                    key={item.id}
+                    style={{
+                      padding: '12px',
+                      borderRadius: '12px',
+                      marginBottom: '10px',
+                      background: item.is_read ? 'rgba(30,41,59,0.7)' : 'rgba(59,130,246,0.12)',
+                      border: item.is_read
+                        ? '1px solid rgba(148,163,184,0.15)'
+                        : '1px solid rgba(59,130,246,0.28)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
+                      <strong>{item.title}</strong>
+                      {!item.is_read ? (
+                        <button
+                          type="button"
+                          className="secondary"
+                          style={{ minWidth: '88px' }}
+                          onClick={() => markNotificationAsRead(item.id)}
+                        >
+                          Marcar
+                        </button>
+                      ) : null}
+                    </div>
+                    <div className="muted" style={{ fontSize: '13px', marginBottom: '6px' }}>
+                      {formatDateTime(item.created_at)}
+                    </div>
+                    <div>{item.message}</div>
+                  </div>
+                ))
+              )}
+            </div>
+          ) : null}
+        </div>
       </header>
 
       {message ? <div className="success-box">{message}</div> : null}
@@ -387,16 +530,8 @@ export default function App() {
 
       <nav className="tabs">
         <button className={activeTab === 'daily' ? 'active' : ''} onClick={() => setActiveTab('daily')}>Resumen diario</button>
-        {user.role === 'admin' ? (
-          <button className={activeTab === 'monthly' ? 'active' : ''} onClick={() => setActiveTab('monthly')}>
-            Resumen mensual
-          </button>
-        ) : null}
-        {user.role === 'admin' ? (
-          <button className={activeTab === 'stats' ? 'active' : ''} onClick={() => setActiveTab('stats')}>
-            Estadísticas
-          </button>
-        ) : null}
+        {user.role === 'admin' ? <button className={activeTab === 'monthly' ? 'active' : ''} onClick={() => setActiveTab('monthly')}>Resumen mensual</button> : null}
+        {user.role === 'admin' ? <button className={activeTab === 'stats' ? 'active' : ''} onClick={() => setActiveTab('stats')}>Estadísticas</button> : null}
       </nav>
 
       {activeTab === 'daily' && (
@@ -454,9 +589,7 @@ export default function App() {
               </button>
             </div>
 
-            {!extendedSchedule ? (
-              <p className="muted">Domingos cerrados y sábados por la tarde deshabilitados.</p>
-            ) : null}
+            {!extendedSchedule ? <p className="muted">Domingos cerrados y sábados por la tarde deshabilitados.</p> : null}
 
             <form onSubmit={saveDay} className="grid-form">
               <label>
@@ -465,45 +598,71 @@ export default function App() {
                   type="number"
                   min="0"
                   step="0.01"
+                  disabled={!isEditing}
                   value={form.morning_sales}
                   onChange={(e) => setForm((prev) => ({ ...prev, morning_sales: e.target.value }))}
                 />
               </label>
+
               <label>
                 Ventas tarde
                 <input
                   type="number"
                   min="0"
                   step="0.01"
-                  disabled={isSaturdayAfternoonDisabled}
+                  disabled={!isEditing || isSaturdayAfternoonDisabled}
                   value={isSaturdayAfternoonDisabled ? '' : form.afternoon_sales}
                   onChange={(e) => setForm((prev) => ({ ...prev, afternoon_sales: e.target.value }))}
                 />
               </label>
+
               <label>
                 Clientes
                 <input
                   type="number"
                   min="0"
+                  disabled={!isEditing}
                   value={form.customers}
                   onChange={(e) => setForm((prev) => ({ ...prev, customers: e.target.value }))}
                 />
               </label>
+
               <label>
                 Total ventas
                 <input type="text" readOnly value={money(totalSales)} />
               </label>
-              <button type="submit">Guardar</button>
+
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <button type="submit" disabled={!isEditing}>Guardar</button>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={unlockForEdit}
+                  disabled={!selectedSale || isEditing}
+                >
+                  Editar
+                </button>
+              </div>
             </form>
           </div>
 
           <div className="card stack">
             <h2>Objetivo diario</h2>
             <p className="muted">{formatDate(selectedDate)} · Meta: {money(DAILY_TARGET)}</p>
+
             <div className="progress">
-              <div className="progress-bar" style={{ width: `${Math.min((totalSales / DAILY_TARGET) * 100, 100)}%` }} />
+              <div
+                className="progress-bar"
+                style={{ width: `${Math.min((totalSales / DAILY_TARGET) * 100, 100)}%` }}
+              />
             </div>
-            <p>{totalSales >= DAILY_TARGET ? 'Objetivo diario alcanzado' : `Faltan ${money(Math.max(DAILY_TARGET - totalSales, 0))}`}</p>
+
+            <p>
+              {totalSales >= DAILY_TARGET
+                ? 'Objetivo diario alcanzado'
+                : `Faltan ${money(Math.max(DAILY_TARGET - totalSales, 0))}`}
+            </p>
+
             <div className="history-table">
               <table>
                 <thead>
@@ -515,17 +674,27 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {dailySales
-                    .slice()
-                    .sort((a, b) => b.sale_date.localeCompare(a.sale_date))
-                    .map((item) => (
-                      <tr key={item.id}>
+                  {dailySales.slice().sort((a, b) => b.sale_date.localeCompare(a.sale_date)).map((item) => {
+                    const missedTarget = item.total_sales < DAILY_TARGET
+                    return (
+                      <tr
+                        key={item.id}
+                        style={
+                          missedTarget
+                            ? {
+                                background: 'rgba(202, 138, 4, 0.16)',
+                                color: '#f8fafc',
+                              }
+                            : undefined
+                        }
+                      >
                         <td>{formatDate(item.sale_date)}</td>
                         <td>{money(item.morning_sales)}</td>
                         <td>{money(item.afternoon_sales)}</td>
                         <td>{money(item.total_sales)}</td>
                       </tr>
-                    ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -574,10 +743,7 @@ export default function App() {
 
             <h2>Gastos del mes</h2>
             {EXPENSE_CATEGORIES.map((category) => {
-              const item = monthlyExpenses.find(
-                (expense) => expense.month_key === selectedMonth && expense.category === category
-              )
-
+              const item = monthlyExpenses.find((expense) => expense.month_key === selectedMonth && expense.category === category)
               return (
                 <div key={category} className="expense-row">
                   <span>{category}</span>
@@ -610,12 +776,14 @@ export default function App() {
       {activeTab === 'stats' && user.role === 'admin' && stats && (
         <section className="card stack">
           <h2>Estadísticas</h2>
+
           <div className="stats-grid">
             <div className="mini-card"><span className="muted">% días con objetivo</span><strong>{stats.daily_target_rate}%</strong></div>
             <div className="mini-card"><span className="muted">% meses con objetivo</span><strong>{stats.monthly_target_rate}%</strong></div>
             <div className="mini-card"><span className="muted">Día más fuerte</span><strong>{stats.best_weekday}</strong></div>
             <div className="mini-card"><span className="muted">Día más flojo</span><strong>{stats.worst_weekday}</strong></div>
           </div>
+
           <div className="history-table">
             <table>
               <thead>
@@ -639,6 +807,38 @@ export default function App() {
                 ))}
               </tbody>
             </table>
+          </div>
+
+          <div className="card stack" style={{ marginTop: '16px' }}>
+            <h2>Logs de guardado</h2>
+            <div className="history-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Fecha/hora</th>
+                    <th>Usuario</th>
+                    <th>Día</th>
+                    <th>Acción</th>
+                    <th>Mañana</th>
+                    <th>Tarde</th>
+                    <th>Clientes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {changeLogs.map((item) => (
+                    <tr key={item.id}>
+                      <td>{formatDateTime(item.changed_at)}</td>
+                      <td>{item.changed_by_display_name}</td>
+                      <td>{formatDate(item.sale_date)}</td>
+                      <td>{item.action}</td>
+                      <td>{money(item.morning_sales)}</td>
+                      <td>{money(item.afternoon_sales)}</td>
+                      <td>{item.customers ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </section>
       )}

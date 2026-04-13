@@ -15,6 +15,7 @@ class DailySale(Base):
     worked: Mapped[bool] = mapped_column(Boolean, default=True)
     customers: Mapped[int | None] = mapped_column(Integer, nullable=True)
     extended_schedule: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey('users.id'), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

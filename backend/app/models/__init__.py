@@ -2,5 +2,14 @@ from app.models.user import User
 from app.models.daily_sale import DailySale
 from app.models.monthly_expense import MonthlyExpense
 from app.models.app_setting import AppSetting
+from app.models.sale_change_log import SaleChangeLog
+from app.models.admin_notification import AdminNotification
 
-__all__ = ['User', 'DailySale', 'MonthlyExpense', 'AppSetting']
+__all__ = [
+    'User',
+    'DailySale',
+    'MonthlyExpense',
+    'AppSetting',
+    'SaleChangeLog',
+    'AdminNotification',
+]

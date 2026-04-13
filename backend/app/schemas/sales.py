@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from pydantic import BaseModel, Field, computed_field
 
 
@@ -25,6 +25,7 @@ class DailySaleRead(BaseModel):
     worked: bool
     customers: int | None
     extended_schedule: bool
+    is_locked: bool
 
     class Config:
         from_attributes = True
@@ -70,3 +71,32 @@ class DashboardStats(BaseModel):
     morning_wins: int
     afternoon_wins: int
     monthly_summaries: list[MonthlySummary]
+
+
+class SaleChangeLogRead(BaseModel):
+    id: int
+    sale_date: date
+    changed_at: datetime
+    changed_by_user_id: int | None
+    changed_by_display_name: str
+    action: str
+    morning_sales: float
+    afternoon_sales: float
+    customers: int | None
+
+    class Config:
+        from_attributes = True
+
+
+class AdminNotificationRead(BaseModel):
+    id: int
+    type: str
+    title: str
+    message: str
+    sale_date: date | None
+    is_read: bool
+    created_by_user_id: int | None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
