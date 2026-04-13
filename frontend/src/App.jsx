@@ -267,15 +267,13 @@ function LoginScreen({ onLogin }) {
       <div className="login-card">
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px' }}>
           <img
-            src="/logo-zapateria.png"
-            alt="Logo de la zapatería"
-            style={{
-              width: '120px',
-              height: 'auto',
-              objectFit: 'contain',
-              filter: 'drop-shadow(0 10px 18px rgba(0,0,0,0.25))',
-            }}
-          />
+			  src="/logo-zapateria.png"
+			  alt="Logo"
+			  style={{
+				width: '120px',
+				filter: 'drop-shadow(0 0 12px rgba(0, 200, 255, 0.6))',
+			  }}
+			/>
           <div style={{ textAlign: 'center' }}>
             <p className="eyebrow">Zapatería</p>
             <h1>Control de ventas y gastos</h1>
