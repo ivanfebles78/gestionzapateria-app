@@ -280,7 +280,6 @@ function LoginScreen({ onLogin }) {
           <div style={{ textAlign: 'center' }}>
             <p className="eyebrow">Zapatería</p>
             <h1>Control de ventas y gastos</h1>
-            <p className="muted">Acceso online compartido con PostgreSQL, backend FastAPI y permisos por rol.</p>
           </div>
         </div>
 
