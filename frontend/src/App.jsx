@@ -316,22 +316,22 @@ export default function App() {
   }, [notificationPanelOpen])
 
   useEffect(() => {
+    if (!message && !error) return
+
+    const timer = setTimeout(() => {
+      setMessage('')
+      setError('')
+    }, 3000)
+
+    return () => clearTimeout(timer)
+  }, [message, error])
+
+  useEffect(() => {
     function onKeyDown(event) {
       if (event.key === 'Escape') {
         setLogsModalOpen(false)
       }
     }
-	
-	useEffect(() => {
-		if (!message && !error) return
-
-			const timer = setTimeout(() => {
-			setMessage('')
-			setError('')
-			}, 3000)
-
-		return () => clearTimeout(timer)
-	}, [message, error])
 
     if (logsModalOpen) {
       document.addEventListener('keydown', onKeyDown)
@@ -477,30 +477,29 @@ export default function App() {
       setError(err.message)
     }
   }
-  
-    function exportLogsToExcel() {
-		const rows = changeLogs
-		  .filter((item) => item.action === 'create' || item.action === 'update')
-		  .map((item) => {
-			const total = Number(item.morning_sales || 0) + Number(item.afternoon_sales || 0)
-			return {
-			  'Fecha y hora': formatDateTime(item.changed_at),
-			  'Usuario': item.changed_by_display_name,
-			  'Día': formatDate(item.sale_date),
-			  'Acción': item.action,
-			  'Ventas mañana': Number(item.morning_sales || 0),
-			  'Ventas tarde': Number(item.afternoon_sales || 0),
-			  'Clientes': item.customers ?? '',
-			  'Total ventas': total,
-			}
-		  })
 
-		const worksheet = XLSX.utils.json_to_sheet(rows)
-		const workbook = XLSX.utils.book_new()
-		XLSX.utils.book_append_sheet(workbook, worksheet, 'Logs')
+  function exportLogsToExcel() {
+    const rows = changeLogs
+      .filter((item) => item.action === 'create' || item.action === 'update')
+      .map((item) => {
+        const total = Number(item.morning_sales || 0) + Number(item.afternoon_sales || 0)
+        return {
+          'Fecha y hora': formatDateTime(item.changed_at),
+          'Usuario': item.changed_by_display_name,
+          'Día': formatDate(item.sale_date),
+          'Acción': item.action === 'create' ? 'Create' : 'Update',
+          'Ventas mañana': Number(item.morning_sales || 0),
+          'Ventas tarde': Number(item.afternoon_sales || 0),
+          'Clientes': item.customers ?? '',
+          'Total ventas': total,
+        }
+      })
 
-		XLSX.writeFile(workbook, 'logs_zapateria.xlsx')
-	}
+    const worksheet = XLSX.utils.json_to_sheet(rows)
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Logs')
+    XLSX.writeFile(workbook, 'logs_zapateria.xlsx')
+  }
 
   function logout() {
     localStorage.removeItem('zapateria_token')
@@ -930,32 +929,32 @@ export default function App() {
       {logsModalOpen ? (
         <div className="modal-backdrop" onClick={() => setLogsModalOpen(false)}>
           <div className="modal-panel logs-modal-panel" onClick={(e) => e.stopPropagation()}>
-			<div className="modal-header">
-                <div>
-                  <h2 style={{ marginBottom: '4px' }}>Logs de actividad</h2>
-                  <p className="muted" style={{ margin: 0 }}>
-                    Día y hora, ventas, clientes, total, usuario y acción realizada.
-                  </p>
-                </div>
-
-                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                  <button
-                    type="button"
-                    className="secondary"
-                    onClick={exportLogsToExcel}
-                  >
-                    Exportar a excel
-                  </button>
-
-                  <button
-                    type="button"
-                    className="secondary"
-                    onClick={() => setLogsModalOpen(false)}
-                  >
-                    Cerrar
-                  </button>
-                </div>
+            <div className="modal-header">
+              <div>
+                <h2 style={{ marginBottom: '4px' }}>Logs de actividad</h2>
+                <p className="muted" style={{ margin: 0 }}>
+                  Día y hora, ventas, clientes, total, usuario y acción realizada.
+                </p>
               </div>
+
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={exportLogsToExcel}
+                >
+                  Exportar a excel
+                </button>
+
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setLogsModalOpen(false)}
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
 
             <div className="history-table logs-modal-table">
               <table>
@@ -972,36 +971,36 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-					{changeLogs.filter((item) => item.action === 'create' || item.action === 'update').length === 0 ? (
-						<tr>
-						  <td colSpan="8" style={{ textAlign: 'center', padding: '18px' }}>
-							No hay logs disponibles.
-						  </td>
-						</tr>
-					  ) : (
-						changeLogs
-						  .filter((item) => item.action === 'create' || item.action === 'update')
-						  .map((item) => {
-							const total = Number(item.morning_sales || 0) + Number(item.afternoon_sales || 0)
-							const actionLabel = item.action === 'create' ? 'Create' : 'Update'
-							const actionClass = item.action === 'create' ? 'log-action-create' : 'log-action-update'
+                  {changeLogs.filter((item) => item.action === 'create' || item.action === 'update').length === 0 ? (
+                    <tr>
+                      <td colSpan="8" style={{ textAlign: 'center', padding: '18px' }}>
+                        No hay logs disponibles.
+                      </td>
+                    </tr>
+                  ) : (
+                    changeLogs
+                      .filter((item) => item.action === 'create' || item.action === 'update')
+                      .map((item) => {
+                        const total = Number(item.morning_sales || 0) + Number(item.afternoon_sales || 0)
+                        const actionLabel = item.action === 'create' ? 'Create' : 'Update'
+                        const actionClass = item.action === 'create' ? 'log-action-create' : 'log-action-update'
 
-							return (
-							  <tr key={item.id}>
-								<td>{formatDateTime(item.changed_at)}</td>
-								<td>{item.changed_by_display_name}</td>
-								<td>{formatDate(item.sale_date)}</td>
-								<td>
-								  <span className={actionClass}>{actionLabel}</span>
-								</td>
-								<td>{money(item.morning_sales)}</td>
-								<td>{money(item.afternoon_sales)}</td>
-								<td>{item.customers ?? '—'}</td>
-								<td>{money(total)}</td>
-							  </tr>
-							)
-						  })
-					)}
+                        return (
+                          <tr key={item.id}>
+                            <td>{formatDateTime(item.changed_at)}</td>
+                            <td>{item.changed_by_display_name}</td>
+                            <td>{formatDate(item.sale_date)}</td>
+                            <td>
+                              <span className={actionClass}>{actionLabel}</span>
+                            </td>
+                            <td>{money(item.morning_sales)}</td>
+                            <td>{money(item.afternoon_sales)}</td>
+                            <td>{item.customers ?? '—'}</td>
+                            <td>{money(total)}</td>
+                          </tr>
+                        )
+                      })
+                  )}
                 </tbody>
               </table>
             </div>
