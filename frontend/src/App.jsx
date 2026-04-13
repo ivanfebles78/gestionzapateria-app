@@ -435,6 +435,11 @@ export default function App() {
       setUser(null)
     }
   }
+  
+  async function handleLogin(me) {
+  setUser(me)
+  await loadBusinessData(me)
+}
 
   async function loadBusinessData(currentUser = user) {
     const [sales, expenses, appSettings, dashboardStats] = await Promise.all([
