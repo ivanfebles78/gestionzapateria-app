@@ -333,9 +333,9 @@ export default function App() {
   const initialForm = useMemo(() => normalizeFormFromSale(selectedSale), [selectedSale])
   const hasUnsavedChanges = isEditing && !formsEqual(form, initialForm)
   const isExistingSavedRecord = Boolean(selectedSale)
+  const showSaveButton = !isExistingSavedRecord || isEditing
   const showEditButton = isExistingSavedRecord
   const editButtonLabel = isExistingSavedRecord && isEditing ? 'Cancelar' : 'Editar'
-  const saveButtonDisabled = isExistingSavedRecord && !isEditing
 
   useEffect(() => {
     const token = localStorage.getItem('zapateria_token')
@@ -853,7 +853,9 @@ export default function App() {
                 </label>
 
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-				  <button type="submit" disabled={saveButtonDisabled}>Guardar</button>
+				  {showSaveButton ? (
+					<button type="submit">Guardar</button>
+				  ) : null}
 
 				  {showEditButton ? (
 					<button
