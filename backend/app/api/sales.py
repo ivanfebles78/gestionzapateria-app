@@ -65,6 +65,7 @@ def create_sale_log(
     )
     db.add(log)
 
+
 def create_admin_notification(
     db: Session,
     *,
