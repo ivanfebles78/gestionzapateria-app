@@ -265,11 +265,24 @@ function LoginScreen({ onLogin }) {
   return (
     <div className="shell center-screen">
       <div className="login-card">
-        <div>
-          <p className="eyebrow">Zapatería</p>
-          <h1>Control de ventas y gastos</h1>
-          <p className="muted">Acceso online compartido con PostgreSQL, backend FastAPI y permisos por rol.</p>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px' }}>
+          <img
+            src="/logo-zapateria.png"
+            alt="Logo de la zapatería"
+            style={{
+              width: '120px',
+              height: 'auto',
+              objectFit: 'contain',
+              filter: 'drop-shadow(0 10px 18px rgba(0,0,0,0.25))',
+            }}
+          />
+          <div style={{ textAlign: 'center' }}>
+            <p className="eyebrow">Zapatería</p>
+            <h1>Control de ventas y gastos</h1>
+            <p className="muted">Acceso online compartido con PostgreSQL, backend FastAPI y permisos por rol.</p>
+          </div>
         </div>
+
         <form onSubmit={submit} className="stack">
           <label>
             Usuario
