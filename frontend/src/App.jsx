@@ -245,6 +245,7 @@ export default function App() {
   const [notifications, setNotifications] = useState([])
   const [changeLogs, setChangeLogs] = useState([])
   const [notificationPanelOpen, setNotificationPanelOpen] = useState(false)
+  const [logsModalOpen, setLogsModalOpen] = useState(false)
   const [selectedDate, setSelectedDate] = useState(getTodayKey())
   const [selectedMonth, setSelectedMonth] = useState(getMonthKey(getTodayKey()))
   const [activeTab, setActiveTab] = useState('daily')
@@ -313,6 +314,24 @@ export default function App() {
     return () => document.removeEventListener('mousedown', handleOutsideClick)
   }, [notificationPanelOpen])
 
+  useEffect(() => {
+    function onKeyDown(event) {
+      if (event.key === 'Escape') {
+        setLogsModalOpen(false)
+      }
+    }
+
+    if (logsModalOpen) {
+      document.addEventListener('keydown', onKeyDown)
+      document.body.style.overflow = 'hidden'
+    }
+
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+      document.body.style.overflow = ''
+    }
+  }, [logsModalOpen])
+
   async function loadSession() {
     try {
       const me = await apiFetch('/api/auth/me')
@@ -340,7 +359,7 @@ export default function App() {
     if (currentUser?.role === 'admin') {
       const [adminNotifications, logs] = await Promise.all([
         apiFetch('/api/admin/notifications?limit=20'),
-        apiFetch('/api/admin/change-logs?limit=50'),
+        apiFetch('/api/admin/change-logs?limit=100'),
       ])
       setNotifications(adminNotifications)
       setChangeLogs(logs)
@@ -460,420 +479,457 @@ export default function App() {
   const totalSales = Number(form.morning_sales || 0) + Number(isSaturdayAfternoonDisabled ? 0 : (form.afternoon_sales || 0))
 
   return (
-    <div className="shell">
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">Zapatería</p>
-          <h1>Control compartido de ventas y gastos</h1>
-          <p className="muted">
-            Usuario: {user.display_name} · Rol: {user.role === 'admin' ? 'Administrador' : 'Tienda'}
-          </p>
-        </div>
+    <>
+      <div className="shell">
+        <header className="topbar">
+          <div>
+            <p className="eyebrow">Zapatería</p>
+            <h1>Control compartido de ventas y gastos</h1>
+            <p className="muted">
+              Usuario: {user.display_name} · Rol: {user.role === 'admin' ? 'Administrador' : 'Tienda'}
+            </p>
+          </div>
 
-        <div className="topbar-actions">
-          {user.role === 'admin' ? (
-            <button
-              ref={notificationButtonRef}
-              type="button"
-              className={`notification-trigger ${notificationPanelOpen ? 'active' : ''}`}
-              onClick={() => setNotificationPanelOpen((prev) => !prev)}
-              title="Notificaciones"
-            >
-              <BellIcon size={18} />
-              {unreadNotifications.length > 0 ? (
-                <span className="notification-badge">{unreadNotifications.length}</span>
-              ) : null}
-            </button>
-          ) : null}
+          <div className="topbar-actions">
+            {user.role === 'admin' ? (
+              <button
+                ref={notificationButtonRef}
+                type="button"
+                className={`notification-trigger ${notificationPanelOpen ? 'active' : ''}`}
+                onClick={() => setNotificationPanelOpen((prev) => !prev)}
+                title="Notificaciones"
+              >
+                <BellIcon size={18} />
+                {unreadNotifications.length > 0 ? (
+                  <span className="notification-badge">{unreadNotifications.length}</span>
+                ) : null}
+              </button>
+            ) : null}
 
-          <button className="secondary" onClick={logout}>Salir</button>
+            <button className="secondary" onClick={logout}>Salir</button>
 
-          {user.role === 'admin' && notificationPanelOpen ? (
-            <div ref={notificationPanelRef} className="notification-panel">
-              <div className="notification-panel-header">
-                <div>
-                  <div className="notification-panel-title">Notificaciones</div>
-                  <div className="notification-panel-subtitle">
-                    {unreadNotifications.length} sin leer
+            {user.role === 'admin' && notificationPanelOpen ? (
+              <div ref={notificationPanelRef} className="notification-panel">
+                <div className="notification-panel-header">
+                  <div>
+                    <div className="notification-panel-title">Notificaciones</div>
+                    <div className="notification-panel-subtitle">
+                      {unreadNotifications.length} sin leer
+                    </div>
+                  </div>
+
+                  <div className="notification-panel-actions">
+                    <button
+                      type="button"
+                      className="secondary small-button"
+                      onClick={markAllNotificationsAsRead}
+                      disabled={unreadNotifications.length === 0}
+                    >
+                      Marcar todas
+                    </button>
                   </div>
                 </div>
 
-                <div className="notification-panel-actions">
-                  <button
-                    type="button"
-                    className="secondary small-button"
-                    onClick={markAllNotificationsAsRead}
-                    disabled={unreadNotifications.length === 0}
-                  >
-                    Marcar todas
-                  </button>
-                </div>
-              </div>
-
-              <div className="notification-list">
-                {notifications.length === 0 ? (
-                  <div className="notification-empty">No hay notificaciones.</div>
-                ) : (
-                  notifications.map((item) => (
-                    <div
-                      key={item.id}
-                      className={`notification-card ${item.is_read ? 'read' : 'unread'}`}
-                    >
-                      <div className="notification-card-top">
-                        <div className="notification-card-main">
-                          <div className="notification-chip">
-                            {item.type === 'daily_sale_edited' ? 'Edición' : 'Aviso'}
+                <div className="notification-list">
+                  {notifications.length === 0 ? (
+                    <div className="notification-empty">No hay notificaciones.</div>
+                  ) : (
+                    notifications.map((item) => (
+                      <div
+                        key={item.id}
+                        className={`notification-card ${item.is_read ? 'read' : 'unread'}`}
+                      >
+                        <div className="notification-card-top">
+                          <div className="notification-card-main">
+                            <div className="notification-chip">
+                              {item.type === 'daily_sale_edited' ? 'Edición' : 'Aviso'}
+                            </div>
+                            <div className="notification-card-title">{item.title}</div>
                           </div>
-                          <div className="notification-card-title">{item.title}</div>
+
+                          {!item.is_read ? (
+                            <button
+                              type="button"
+                              className="secondary small-button"
+                              onClick={() => markNotificationAsRead(item.id)}
+                            >
+                              Marcar
+                            </button>
+                          ) : null}
                         </div>
 
-                        {!item.is_read ? (
-                          <button
-                            type="button"
-                            className="secondary small-button"
-                            onClick={() => markNotificationAsRead(item.id)}
-                          >
-                            Marcar
-                          </button>
-                        ) : null}
+                        <div className="notification-card-date">{formatDateTime(item.created_at)}</div>
+                        <div className="notification-card-message">{item.message}</div>
                       </div>
-
-                      <div className="notification-card-date">{formatDateTime(item.created_at)}</div>
-                      <div className="notification-card-message">{item.message}</div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </header>
-
-      {message ? <div className="success-box">{message}</div> : null}
-      {error ? <div className="error-box">{error}</div> : null}
-
-      <section className="stats-grid">
-        <div className="card"><span className="muted">Ventas día seleccionado</span><strong>{money(totalSales)}</strong></div>
-        <div className="card"><span className="muted">Ventas mes actual</span><strong>{money(currentMonthSummary.salesTotal)}</strong></div>
-        <div className="card"><span className="muted">Gastos mes actual</span><strong>{money(currentMonthSummary.expensesTotal)}</strong></div>
-        <div className="card"><span className="muted">Balance mes actual</span><strong>{money(currentMonthSummary.balance)}</strong></div>
-      </section>
-
-      <nav className="tabs">
-        <button className={activeTab === 'daily' ? 'active' : ''} onClick={() => setActiveTab('daily')}>Resumen diario</button>
-        {user.role === 'admin' ? <button className={activeTab === 'monthly' ? 'active' : ''} onClick={() => setActiveTab('monthly')}>Resumen mensual</button> : null}
-        {user.role === 'admin' ? <button className={activeTab === 'stats' ? 'active' : ''} onClick={() => setActiveTab('stats')}>Estadísticas</button> : null}
-      </nav>
-
-      {activeTab === 'daily' && (
-        <section className="two-columns">
-          <div className="card stack">
-            <h2>Registro de ventas por día</h2>
-
-            {user.role === 'admin' ? (
-              <div style={checkboxWrapStyle}>
-                <label style={checkboxLabelStyle}>
-                  <input
-                    type="checkbox"
-                    style={checkboxInputStyle}
-                    checked={extendedSchedule}
-                    onChange={(e) => toggleExtendedSchedule(e.target.checked)}
-                  />
-                  <span>Habilitar horario extendido</span>
-                </label>
+                    ))
+                  )}
+                </div>
               </div>
             ) : null}
+          </div>
+        </header>
 
-            <div style={{ ...rowStyle, marginBottom: '16px' }}>
-              <button
-                type="button"
-                className="secondary"
-                style={navButtonStyle}
-                onClick={() => setSelectedDate((prev) => nextAllowedDate(prev, -1, extendedSchedule))}
-              >
-                ◀
-              </button>
+        {message ? <div className="success-box">{message}</div> : null}
+        {error ? <div className="error-box">{error}</div> : null}
 
-              <input
-                type="date"
-                value={selectedDate}
-                style={dateInputStyle}
-                onChange={(e) => setSelectedDate(normalizeDate(e.target.value, extendedSchedule))}
-              />
+        <section className="stats-grid">
+          <div className="card"><span className="muted">Ventas día seleccionado</span><strong>{money(totalSales)}</strong></div>
+          <div className="card"><span className="muted">Ventas mes actual</span><strong>{money(currentMonthSummary.salesTotal)}</strong></div>
+          <div className="card"><span className="muted">Gastos mes actual</span><strong>{money(currentMonthSummary.expensesTotal)}</strong></div>
+          <div className="card"><span className="muted">Balance mes actual</span><strong>{money(currentMonthSummary.balance)}</strong></div>
+        </section>
 
-              <button
-                type="button"
-                className="secondary"
-                style={navButtonStyle}
-                onClick={() => setSelectedDate((prev) => nextAllowedDate(prev, 1, extendedSchedule))}
-              >
-                ▶
-              </button>
+        <nav className="tabs">
+          <button className={activeTab === 'daily' ? 'active' : ''} onClick={() => setActiveTab('daily')}>Resumen diario</button>
+          {user.role === 'admin' ? <button className={activeTab === 'monthly' ? 'active' : ''} onClick={() => setActiveTab('monthly')}>Resumen mensual</button> : null}
+          {user.role === 'admin' ? <button className={activeTab === 'stats' ? 'active' : ''} onClick={() => setActiveTab('stats')}>Estadísticas</button> : null}
+          {user.role === 'admin' ? (
+            <button type="button" onClick={() => setLogsModalOpen(true)}>Logs</button>
+          ) : null}
+        </nav>
 
-              <button
-                type="button"
-                className="secondary"
-                style={todayButtonStyle}
-                onClick={() => setSelectedDate(normalizeDate(getTodayKey(), extendedSchedule))}
-              >
-                Hoy
-              </button>
-            </div>
+        {activeTab === 'daily' && (
+          <section className="two-columns">
+            <div className="card stack">
+              <h2>Registro de ventas por día</h2>
 
-            {!extendedSchedule ? <p className="muted">Domingos cerrados y sábados por la tarde deshabilitados.</p> : null}
+              {user.role === 'admin' ? (
+                <div style={checkboxWrapStyle}>
+                  <label style={checkboxLabelStyle}>
+                    <input
+                      type="checkbox"
+                      style={checkboxInputStyle}
+                      checked={extendedSchedule}
+                      onChange={(e) => toggleExtendedSchedule(e.target.checked)}
+                    />
+                    <span>Habilitar horario extendido</span>
+                  </label>
+                </div>
+              ) : null}
 
-            <form onSubmit={saveDay} className="grid-form">
-              <label>
-                Ventas mañana
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  disabled={!isEditing}
-                  value={form.morning_sales}
-                  onChange={(e) => setForm((prev) => ({ ...prev, morning_sales: e.target.value }))}
-                />
-              </label>
-
-              <label>
-                Ventas tarde
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  disabled={!isEditing || isSaturdayAfternoonDisabled}
-                  value={isSaturdayAfternoonDisabled ? '' : form.afternoon_sales}
-                  onChange={(e) => setForm((prev) => ({ ...prev, afternoon_sales: e.target.value }))}
-                />
-              </label>
-
-              <label>
-                Clientes
-                <input
-                  type="number"
-                  min="0"
-                  disabled={!isEditing}
-                  value={form.customers}
-                  onChange={(e) => setForm((prev) => ({ ...prev, customers: e.target.value }))}
-                />
-              </label>
-
-              <label>
-                Total ventas
-                <input type="text" readOnly value={money(totalSales)} />
-              </label>
-
-              <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-                <button type="submit" disabled={!isEditing}>Guardar</button>
+              <div style={{ ...rowStyle, marginBottom: '16px' }}>
                 <button
                   type="button"
                   className="secondary"
-                  onClick={unlockForEdit}
-                  disabled={!selectedSale || isEditing}
+                  style={navButtonStyle}
+                  onClick={() => setSelectedDate((prev) => nextAllowedDate(prev, -1, extendedSchedule))}
                 >
-                  Editar
+                  ◀
+                </button>
+
+                <input
+                  type="date"
+                  value={selectedDate}
+                  style={dateInputStyle}
+                  onChange={(e) => setSelectedDate(normalizeDate(e.target.value, extendedSchedule))}
+                />
+
+                <button
+                  type="button"
+                  className="secondary"
+                  style={navButtonStyle}
+                  onClick={() => setSelectedDate((prev) => nextAllowedDate(prev, 1, extendedSchedule))}
+                >
+                  ▶
+                </button>
+
+                <button
+                  type="button"
+                  className="secondary"
+                  style={todayButtonStyle}
+                  onClick={() => setSelectedDate(normalizeDate(getTodayKey(), extendedSchedule))}
+                >
+                  Hoy
                 </button>
               </div>
-            </form>
-          </div>
 
-          <div className="card stack">
-            <h2>Objetivo diario</h2>
-            <p className="muted">{formatDate(selectedDate)} · Meta: {money(DAILY_TARGET)}</p>
+              {!extendedSchedule ? <p className="muted">Domingos cerrados y sábados por la tarde deshabilitados.</p> : null}
 
-            <div className="progress">
-              <div
-                className="progress-bar"
-                style={{ width: `${Math.min((totalSales / DAILY_TARGET) * 100, 100)}%` }}
-              />
+              <form onSubmit={saveDay} className="grid-form">
+                <label>
+                  Ventas mañana
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    disabled={!isEditing}
+                    value={form.morning_sales}
+                    onChange={(e) => setForm((prev) => ({ ...prev, morning_sales: e.target.value }))}
+                  />
+                </label>
+
+                <label>
+                  Ventas tarde
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    disabled={!isEditing || isSaturdayAfternoonDisabled}
+                    value={isSaturdayAfternoonDisabled ? '' : form.afternoon_sales}
+                    onChange={(e) => setForm((prev) => ({ ...prev, afternoon_sales: e.target.value }))}
+                  />
+                </label>
+
+                <label>
+                  Clientes
+                  <input
+                    type="number"
+                    min="0"
+                    disabled={!isEditing}
+                    value={form.customers}
+                    onChange={(e) => setForm((prev) => ({ ...prev, customers: e.target.value }))}
+                  />
+                </label>
+
+                <label>
+                  Total ventas
+                  <input type="text" readOnly value={money(totalSales)} />
+                </label>
+
+                <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button type="submit" disabled={!isEditing}>Guardar</button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={unlockForEdit}
+                    disabled={!selectedSale || isEditing}
+                  >
+                    Editar
+                  </button>
+                </div>
+              </form>
             </div>
 
-            <p>
-              {totalSales >= DAILY_TARGET
-                ? 'Objetivo diario alcanzado'
-                : `Faltan ${money(Math.max(DAILY_TARGET - totalSales, 0))}`}
-            </p>
+            <div className="card stack">
+              <h2>Objetivo diario</h2>
+              <p className="muted">{formatDate(selectedDate)} · Meta: {money(DAILY_TARGET)}</p>
+
+              <div className="progress">
+                <div
+                  className="progress-bar"
+                  style={{ width: `${Math.min((totalSales / DAILY_TARGET) * 100, 100)}%` }}
+                />
+              </div>
+
+              <p>
+                {totalSales >= DAILY_TARGET
+                  ? 'Objetivo diario alcanzado'
+                  : `Faltan ${money(Math.max(DAILY_TARGET - totalSales, 0))}`}
+              </p>
+
+              <div className="history-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Mañana</th>
+                      <th>Tarde</th>
+                      <th>Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dailySales.slice().sort((a, b) => b.sale_date.localeCompare(a.sale_date)).map((item) => {
+                      const missedTarget = item.total_sales < DAILY_TARGET
+                      return (
+                        <tr
+                          key={item.id}
+                          style={
+                            missedTarget
+                              ? {
+                                  background: 'rgba(202, 138, 4, 0.16)',
+                                  color: '#f8fafc',
+                                }
+                              : undefined
+                          }
+                        >
+                          <td>{formatDate(item.sale_date)}</td>
+                          <td>{money(item.morning_sales)}</td>
+                          <td>{money(item.afternoon_sales)}</td>
+                          <td>{money(item.total_sales)}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {activeTab === 'monthly' && user.role === 'admin' && (
+          <section className="two-columns">
+            <div className="card stack">
+              <div style={{ ...rowStyle, marginBottom: '16px' }}>
+                <button
+                  type="button"
+                  className="secondary"
+                  style={navButtonStyle}
+                  onClick={() => setSelectedMonth((prev) => addMonths(prev, -1))}
+                >
+                  ◀
+                </button>
+
+                <input
+                  type="month"
+                  value={selectedMonth}
+                  style={monthInputStyle}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                />
+
+                <button
+                  type="button"
+                  className="secondary"
+                  style={navButtonStyle}
+                  onClick={() => setSelectedMonth((prev) => addMonths(prev, 1))}
+                >
+                  ▶
+                </button>
+
+                <button
+                  type="button"
+                  className="secondary"
+                  style={currentMonthButtonStyle}
+                  onClick={() => setSelectedMonth(todayMonth)}
+                >
+                  Mes actual
+                </button>
+              </div>
+
+              <h2>Gastos del mes</h2>
+              {EXPENSE_CATEGORIES.map((category) => {
+                const item = monthlyExpenses.find((expense) => expense.month_key === selectedMonth && expense.category === category)
+                return (
+                  <div key={category} className="expense-row">
+                    <span>{category}</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      defaultValue={item?.amount || ''}
+                      onBlur={(e) => saveExpense(category, e.target.value)}
+                    />
+                  </div>
+                )
+              })}
+            </div>
+
+            <div className="card stack">
+              <h2>Resultado del mes</h2>
+              <p>Mes: {getMonthLabel(selectedMonth)}</p>
+              <p>Facturación: <strong>{money(viewedMonth.salesTotal)}</strong></p>
+              <p>Gastos: <strong>{money(viewedMonth.expensesTotal)}</strong></p>
+              <p>Balance: <strong>{money(viewedMonth.balance)}</strong></p>
+              <div className="progress">
+                <div className="progress-bar green" style={{ width: `${Math.min(viewedMonth.progress, 100)}%` }} />
+              </div>
+              <p>Progreso mensual: {viewedMonth.progress}% de {money(MONTHLY_TARGET)}</p>
+            </div>
+          </section>
+        )}
+
+        {activeTab === 'stats' && user.role === 'admin' && stats && (
+          <section className="card stack">
+            <h2>Estadísticas</h2>
+
+            <div className="stats-grid">
+              <div className="mini-card"><span className="muted">% días con objetivo</span><strong>{stats.daily_target_rate}%</strong></div>
+              <div className="mini-card"><span className="muted">% meses con objetivo</span><strong>{stats.monthly_target_rate}%</strong></div>
+              <div className="mini-card"><span className="muted">Día más fuerte</span><strong>{stats.best_weekday}</strong></div>
+              <div className="mini-card"><span className="muted">Día más flojo</span><strong>{stats.worst_weekday}</strong></div>
+            </div>
 
             <div className="history-table">
               <table>
                 <thead>
                   <tr>
-                    <th>Fecha</th>
+                    <th>Mes</th>
+                    <th>Ventas</th>
+                    <th>Gastos</th>
+                    <th>Balance</th>
+                    <th>% objetivo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stats.monthly_summaries.map((item) => (
+                    <tr key={item.month_key}>
+                      <td>{getMonthLabel(item.month_key)}</td>
+                      <td>{money(item.sales_total)}</td>
+                      <td>{money(item.expenses_total)}</td>
+                      <td>{money(item.balance)}</td>
+                      <td>{item.target_progress_pct}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+      </div>
+
+      {logsModalOpen ? (
+        <div className="modal-backdrop" onClick={() => setLogsModalOpen(false)}>
+          <div className="modal-panel logs-modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2 style={{ marginBottom: '4px' }}>Logs de actividad</h2>
+                <p className="muted" style={{ margin: 0 }}>
+                  Día y hora, ventas, clientes, total, usuario y acción realizada.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => setLogsModalOpen(false)}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="history-table logs-modal-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Fecha y hora</th>
+                    <th>Usuario</th>
+                    <th>Día</th>
+                    <th>Acción</th>
                     <th>Mañana</th>
                     <th>Tarde</th>
+                    <th>Clientes</th>
                     <th>Total</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {dailySales.slice().sort((a, b) => b.sale_date.localeCompare(a.sale_date)).map((item) => {
-                    const missedTarget = item.total_sales < DAILY_TARGET
-                    return (
-                      <tr
-                        key={item.id}
-                        style={
-                          missedTarget
-                            ? {
-                                background: 'rgba(202, 138, 4, 0.16)',
-                                color: '#f8fafc',
-                              }
-                            : undefined
-                        }
-                      >
-                        <td>{formatDate(item.sale_date)}</td>
-                        <td>{money(item.morning_sales)}</td>
-                        <td>{money(item.afternoon_sales)}</td>
-                        <td>{money(item.total_sales)}</td>
-                      </tr>
-                    )
-                  })}
+                  {changeLogs.length === 0 ? (
+                    <tr>
+                      <td colSpan="8" style={{ textAlign: 'center', padding: '18px' }}>
+                        No hay logs disponibles.
+                      </td>
+                    </tr>
+                  ) : (
+                    changeLogs.map((item) => {
+                      const total = Number(item.morning_sales || 0) + Number(item.afternoon_sales || 0)
+                      return (
+                        <tr key={item.id}>
+                          <td>{formatDateTime(item.changed_at)}</td>
+                          <td>{item.changed_by_display_name}</td>
+                          <td>{formatDate(item.sale_date)}</td>
+                          <td>{item.action}</td>
+                          <td>{money(item.morning_sales)}</td>
+                          <td>{money(item.afternoon_sales)}</td>
+                          <td>{item.customers ?? '—'}</td>
+                          <td>{money(total)}</td>
+                        </tr>
+                      )
+                    })
+                  )}
                 </tbody>
               </table>
             </div>
           </div>
-        </section>
-      )}
-
-      {activeTab === 'monthly' && user.role === 'admin' && (
-        <section className="two-columns">
-          <div className="card stack">
-            <div style={{ ...rowStyle, marginBottom: '16px' }}>
-              <button
-                type="button"
-                className="secondary"
-                style={navButtonStyle}
-                onClick={() => setSelectedMonth((prev) => addMonths(prev, -1))}
-              >
-                ◀
-              </button>
-
-              <input
-                type="month"
-                value={selectedMonth}
-                style={monthInputStyle}
-                onChange={(e) => setSelectedMonth(e.target.value)}
-              />
-
-              <button
-                type="button"
-                className="secondary"
-                style={navButtonStyle}
-                onClick={() => setSelectedMonth((prev) => addMonths(prev, 1))}
-              >
-                ▶
-              </button>
-
-              <button
-                type="button"
-                className="secondary"
-                style={currentMonthButtonStyle}
-                onClick={() => setSelectedMonth(todayMonth)}
-              >
-                Mes actual
-              </button>
-            </div>
-
-            <h2>Gastos del mes</h2>
-            {EXPENSE_CATEGORIES.map((category) => {
-              const item = monthlyExpenses.find((expense) => expense.month_key === selectedMonth && expense.category === category)
-              return (
-                <div key={category} className="expense-row">
-                  <span>{category}</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    defaultValue={item?.amount || ''}
-                    onBlur={(e) => saveExpense(category, e.target.value)}
-                  />
-                </div>
-              )
-            })}
-          </div>
-
-          <div className="card stack">
-            <h2>Resultado del mes</h2>
-            <p>Mes: {getMonthLabel(selectedMonth)}</p>
-            <p>Facturación: <strong>{money(viewedMonth.salesTotal)}</strong></p>
-            <p>Gastos: <strong>{money(viewedMonth.expensesTotal)}</strong></p>
-            <p>Balance: <strong>{money(viewedMonth.balance)}</strong></p>
-            <div className="progress">
-              <div className="progress-bar green" style={{ width: `${Math.min(viewedMonth.progress, 100)}%` }} />
-            </div>
-            <p>Progreso mensual: {viewedMonth.progress}% de {money(MONTHLY_TARGET)}</p>
-          </div>
-        </section>
-      )}
-
-      {activeTab === 'stats' && user.role === 'admin' && stats && (
-        <section className="card stack">
-          <h2>Estadísticas</h2>
-
-          <div className="stats-grid">
-            <div className="mini-card"><span className="muted">% días con objetivo</span><strong>{stats.daily_target_rate}%</strong></div>
-            <div className="mini-card"><span className="muted">% meses con objetivo</span><strong>{stats.monthly_target_rate}%</strong></div>
-            <div className="mini-card"><span className="muted">Día más fuerte</span><strong>{stats.best_weekday}</strong></div>
-            <div className="mini-card"><span className="muted">Día más flojo</span><strong>{stats.worst_weekday}</strong></div>
-          </div>
-
-          <div className="history-table">
-            <table>
-              <thead>
-                <tr>
-                  <th>Mes</th>
-                  <th>Ventas</th>
-                  <th>Gastos</th>
-                  <th>Balance</th>
-                  <th>% objetivo</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stats.monthly_summaries.map((item) => (
-                  <tr key={item.month_key}>
-                    <td>{getMonthLabel(item.month_key)}</td>
-                    <td>{money(item.sales_total)}</td>
-                    <td>{money(item.expenses_total)}</td>
-                    <td>{money(item.balance)}</td>
-                    <td>{item.target_progress_pct}%</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="notification-logs-card">
-            <div className="notification-logs-header">
-              <div>
-                <h2 style={{ marginBottom: '4px' }}>Logs de guardado</h2>
-                <p className="muted" style={{ margin: 0 }}>
-                  Histórico de acciones realizadas por los usuarios.
-                </p>
-              </div>
-            </div>
-
-            <div className="log-list">
-              {changeLogs.map((item) => (
-                <div key={item.id} className="log-row">
-                  <div className="log-row-left">
-                    <div className="log-chip">{item.action}</div>
-                    <div className="log-main">
-                      <div className="log-title">
-                        {item.changed_by_display_name} · {formatDate(item.sale_date)}
-                      </div>
-                      <div className="log-subtitle">{formatDateTime(item.changed_at)}</div>
-                    </div>
-                  </div>
-
-                  <div className="log-values">
-                    <span>M: {money(item.morning_sales)}</span>
-                    <span>T: {money(item.afternoon_sales)}</span>
-                    <span>C: {item.customers ?? '—'}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-      )}
-    </div>
+        </div>
+      ) : null}
+    </>
   )
 }
