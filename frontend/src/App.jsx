@@ -632,7 +632,7 @@ export default function App() {
   }
 
   if (!user) {
-    return <LoginScreen onLogin={setUser} />
+    return <LoginScreen onLogin={handleLogin} />
   }
 
   const isSaturdayAfternoonDisabled = isSaturday(selectedDate) && !extendedSchedule
