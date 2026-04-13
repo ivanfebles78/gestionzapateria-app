@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { apiFetch } from './lib/api'
 
 const DAILY_TARGET = 500
@@ -13,6 +13,25 @@ const EXPENSE_CATEGORIES = [
   'Seguridad Social',
   'Otros',
 ]
+
+function BellIcon({ size = 18 }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M15 17h5l-1.405-1.405A2.032 2.032 0 0 1 18 14.158V11a6.002 6.002 0 0 0-4-5.659V4a2 2 0 1 0-4 0v1.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5" />
+      <path d="M9 17a3 3 0 0 0 6 0" />
+    </svg>
+  )
+}
 
 function money(n) {
   return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(Number(n || 0))
@@ -233,6 +252,8 @@ export default function App() {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [isEditing, setIsEditing] = useState(true)
+  const notificationPanelRef = useRef(null)
+  const notificationButtonRef = useRef(null)
 
   const extendedSchedule = settings.extended_schedule_enabled
 
@@ -277,6 +298,20 @@ export default function App() {
       setIsEditing(true)
     }
   }, [selectedSale])
+
+  useEffect(() => {
+    function handleOutsideClick(event) {
+      if (!notificationPanelOpen) return
+      const clickedInsidePanel = notificationPanelRef.current?.contains(event.target)
+      const clickedButton = notificationButtonRef.current?.contains(event.target)
+      if (!clickedInsidePanel && !clickedButton) {
+        setNotificationPanelOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleOutsideClick)
+    return () => document.removeEventListener('mousedown', handleOutsideClick)
+  }, [notificationPanelOpen])
 
   async function loadSession() {
     try {
@@ -396,6 +431,22 @@ export default function App() {
     }
   }
 
+  async function markAllNotificationsAsRead() {
+    try {
+      const unread = notifications.filter((item) => !item.is_read)
+      await Promise.all(
+        unread.map((item) =>
+          apiFetch(`/api/admin/notifications/${item.id}/read`, {
+            method: 'POST',
+          })
+        )
+      )
+      await loadBusinessData(user)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   function logout() {
     localStorage.removeItem('zapateria_token')
     setUser(null)
@@ -419,36 +470,18 @@ export default function App() {
           </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' }}>
+        <div className="topbar-actions">
           {user.role === 'admin' ? (
             <button
+              ref={notificationButtonRef}
               type="button"
-              className="secondary"
+              className={`notification-trigger ${notificationPanelOpen ? 'active' : ''}`}
               onClick={() => setNotificationPanelOpen((prev) => !prev)}
-              style={{ position: 'relative', minWidth: '54px' }}
               title="Notificaciones"
             >
-              🔔
+              <BellIcon size={18} />
               {unreadNotifications.length > 0 ? (
-                <span
-                  style={{
-                    position: 'absolute',
-                    top: '-6px',
-                    right: '-6px',
-                    background: '#ef4444',
-                    color: '#fff',
-                    borderRadius: '999px',
-                    fontSize: '11px',
-                    minWidth: '20px',
-                    height: '20px',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    padding: '0 6px',
-                  }}
-                >
-                  {unreadNotifications.length}
-                </span>
+                <span className="notification-badge">{unreadNotifications.length}</span>
               ) : null}
             </button>
           ) : null}
@@ -456,63 +489,61 @@ export default function App() {
           <button className="secondary" onClick={logout}>Salir</button>
 
           {user.role === 'admin' && notificationPanelOpen ? (
-            <div
-              style={{
-                position: 'absolute',
-                top: '56px',
-                right: 0,
-                width: '380px',
-                maxHeight: '420px',
-                overflowY: 'auto',
-                background: '#0f172a',
-                border: '1px solid rgba(148,163,184,0.25)',
-                borderRadius: '16px',
-                padding: '14px',
-                boxShadow: '0 20px 45px rgba(0,0,0,0.35)',
-                zIndex: 20,
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <strong>Notificaciones</strong>
-                <span className="muted">{unreadNotifications.length} sin leer</span>
+            <div ref={notificationPanelRef} className="notification-panel">
+              <div className="notification-panel-header">
+                <div>
+                  <div className="notification-panel-title">Notificaciones</div>
+                  <div className="notification-panel-subtitle">
+                    {unreadNotifications.length} sin leer
+                  </div>
+                </div>
+
+                <div className="notification-panel-actions">
+                  <button
+                    type="button"
+                    className="secondary small-button"
+                    onClick={markAllNotificationsAsRead}
+                    disabled={unreadNotifications.length === 0}
+                  >
+                    Marcar todas
+                  </button>
+                </div>
               </div>
 
-              {notifications.length === 0 ? (
-                <p className="muted">No hay notificaciones.</p>
-              ) : (
-                notifications.map((item) => (
-                  <div
-                    key={item.id}
-                    style={{
-                      padding: '12px',
-                      borderRadius: '12px',
-                      marginBottom: '10px',
-                      background: item.is_read ? 'rgba(30,41,59,0.7)' : 'rgba(59,130,246,0.12)',
-                      border: item.is_read
-                        ? '1px solid rgba(148,163,184,0.15)'
-                        : '1px solid rgba(59,130,246,0.28)',
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
-                      <strong>{item.title}</strong>
-                      {!item.is_read ? (
-                        <button
-                          type="button"
-                          className="secondary"
-                          style={{ minWidth: '88px' }}
-                          onClick={() => markNotificationAsRead(item.id)}
-                        >
-                          Marcar
-                        </button>
-                      ) : null}
+              <div className="notification-list">
+                {notifications.length === 0 ? (
+                  <div className="notification-empty">No hay notificaciones.</div>
+                ) : (
+                  notifications.map((item) => (
+                    <div
+                      key={item.id}
+                      className={`notification-card ${item.is_read ? 'read' : 'unread'}`}
+                    >
+                      <div className="notification-card-top">
+                        <div className="notification-card-main">
+                          <div className="notification-chip">
+                            {item.type === 'daily_sale_edited' ? 'Edición' : 'Aviso'}
+                          </div>
+                          <div className="notification-card-title">{item.title}</div>
+                        </div>
+
+                        {!item.is_read ? (
+                          <button
+                            type="button"
+                            className="secondary small-button"
+                            onClick={() => markNotificationAsRead(item.id)}
+                          >
+                            Marcar
+                          </button>
+                        ) : null}
+                      </div>
+
+                      <div className="notification-card-date">{formatDateTime(item.created_at)}</div>
+                      <div className="notification-card-message">{item.message}</div>
                     </div>
-                    <div className="muted" style={{ fontSize: '13px', marginBottom: '6px' }}>
-                      {formatDateTime(item.created_at)}
-                    </div>
-                    <div>{item.message}</div>
-                  </div>
-                ))
-              )}
+                  ))
+                )}
+              </div>
             </div>
           ) : null}
         </div>
@@ -809,35 +840,36 @@ export default function App() {
             </table>
           </div>
 
-          <div className="card stack" style={{ marginTop: '16px' }}>
-            <h2>Logs de guardado</h2>
-            <div className="history-table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Fecha/hora</th>
-                    <th>Usuario</th>
-                    <th>Día</th>
-                    <th>Acción</th>
-                    <th>Mañana</th>
-                    <th>Tarde</th>
-                    <th>Clientes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {changeLogs.map((item) => (
-                    <tr key={item.id}>
-                      <td>{formatDateTime(item.changed_at)}</td>
-                      <td>{item.changed_by_display_name}</td>
-                      <td>{formatDate(item.sale_date)}</td>
-                      <td>{item.action}</td>
-                      <td>{money(item.morning_sales)}</td>
-                      <td>{money(item.afternoon_sales)}</td>
-                      <td>{item.customers ?? '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <div className="notification-logs-card">
+            <div className="notification-logs-header">
+              <div>
+                <h2 style={{ marginBottom: '4px' }}>Logs de guardado</h2>
+                <p className="muted" style={{ margin: 0 }}>
+                  Histórico de acciones realizadas por los usuarios.
+                </p>
+              </div>
+            </div>
+
+            <div className="log-list">
+              {changeLogs.map((item) => (
+                <div key={item.id} className="log-row">
+                  <div className="log-row-left">
+                    <div className="log-chip">{item.action}</div>
+                    <div className="log-main">
+                      <div className="log-title">
+                        {item.changed_by_display_name} · {formatDate(item.sale_date)}
+                      </div>
+                      <div className="log-subtitle">{formatDateTime(item.changed_at)}</div>
+                    </div>
+                  </div>
+
+                  <div className="log-values">
+                    <span>M: {money(item.morning_sales)}</span>
+                    <span>T: {money(item.afternoon_sales)}</span>
+                    <span>C: {item.customers ?? '—'}</span>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </section>
