@@ -51,6 +51,14 @@ function getTodayKey() {
   return d.toISOString().slice(0, 10)
 }
 
+function isFutureDate(dateStr) {
+  return dateStr > getTodayKey()
+}
+
+function clampToToday(dateStr) {
+  return isFutureDate(dateStr) ? getTodayKey() : dateStr
+}
+
 function addDays(dateStr, days) {
   const d = new Date(`${dateStr}T12:00:00`)
   d.setDate(d.getDate() + days)
@@ -324,10 +332,13 @@ export default function App() {
     [todayMonth, dailySales, monthlyExpenses]
   )
 
-  const visibleDailyRows = useMemo(
-    () => buildMonthDailyRows(getMonthKey(selectedDate), dailySales, extendedSchedule),
-    [selectedDate, dailySales, extendedSchedule]
-  )
+	const visibleDailyRows = useMemo(
+	  () =>
+		buildMonthDailyRows(getMonthKey(selectedDate), dailySales, extendedSchedule).filter(
+		  (item) => item.sale_date <= getTodayKey()
+		),
+	  [selectedDate, dailySales, extendedSchedule]
+	)
 
   const unreadNotifications = notifications.filter((item) => !item.is_read)
   const initialForm = useMemo(() => normalizeFormFromSale(selectedSale), [selectedSale])
@@ -442,6 +453,12 @@ export default function App() {
     if (e) e.preventDefault()
     setMessage('')
     setError('')
+	
+	if (isFutureDate(selectedDate)) {
+		setSelectedDate(getTodayKey())
+		setError('No se pueden registrar ventas para fechas futuras. Se ha cambiado la fecha al día de hoy.')
+		return false
+	}
 
     try {
       const payload = {
@@ -772,28 +789,39 @@ export default function App() {
                 </button>
 
                 <input
-                  type="date"
-                  value={selectedDate}
-                  style={dateInputStyle}
-                  onChange={(e) =>
-                    requestNavigation(() =>
-                      setSelectedDate(normalizeDate(e.target.value, extendedSchedule))
-                    )
-                  }
-                />
+				  type="date"
+				  value={selectedDate}
+				  style={dateInputStyle}
+				  max={getTodayKey()}
+				  onChange={(e) =>
+					requestNavigation(() => {
+					  const rawDate = e.target.value
+					  if (isFutureDate(rawDate)) {
+						setError('No se pueden registrar ventas para fechas futuras.')
+						setSelectedDate(getTodayKey())
+						return
+					  }
+					  setSelectedDate(normalizeDate(rawDate, extendedSchedule))
+					})
+				  }
+				/>
 
-                <button
-                  type="button"
-                  className="secondary"
-                  style={navButtonStyle}
-                  onClick={() =>
-                    requestNavigation(() =>
-                      setSelectedDate((prev) => nextAllowedDate(prev, 1, extendedSchedule))
-                    )
-                  }
-                >
-                  ▶
-                </button>
+               <button
+				  type="button"
+				  className="secondary"
+				  style={navButtonStyle}
+				  disabled={selectedDate >= getTodayKey()}
+				  onClick={() =>
+					requestNavigation(() =>
+					  setSelectedDate((prev) => {
+						const nextDate = nextAllowedDate(prev, 1, extendedSchedule)
+						return clampToToday(nextDate)
+					  })
+					)
+				  }
+				>
+				  ▶
+				</button>
 
                 <button
                   type="button"

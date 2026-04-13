@@ -123,9 +123,13 @@ def list_daily_sales(
 
 @router.put('/daily-sales', response_model=DailySaleRead)
 def upsert_daily_sale(
+    from datetime import date
+    
     payload: DailySaleUpsert,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    if payload.sale_date > date.today():
+        raise HTTPException(status_code=400, detail='No se pueden registrar ventas para fechas futuras')
 ):
     sale = db.query(DailySale).filter(DailySale.sale_date == payload.sale_date).first()
     already_existed = sale is not None
@@ -184,16 +188,6 @@ def unlock_daily_sale(
 
     sale.is_locked = False
     sale.updated_by_user_id = user.id
-
-    create_sale_log(
-        db,
-        sale_date=sale.sale_date,
-        user=user,
-        action='unlock',
-        morning_sales=sale.morning_sales,
-        afternoon_sales=sale.afternoon_sales,
-        customers=sale.customers,
-    )
 
     db.commit()
     db.refresh(sale)
