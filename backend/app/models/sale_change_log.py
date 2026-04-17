@@ -22,14 +22,25 @@ class SaleChangeLog(Base):
     morning_bonos: Mapped[float] = mapped_column(Float, default=0)
     morning_total: Mapped[float] = mapped_column(Float, default=0)
 
+    morning_cash_customers: Mapped[int] = mapped_column(Integer, default=0)
+    morning_card_customers: Mapped[int] = mapped_column(Integer, default=0)
+    morning_bizum_customers: Mapped[int] = mapped_column(Integer, default=0)
+    morning_bonos_customers: Mapped[int] = mapped_column(Integer, default=0)
+    morning_customers_total: Mapped[int] = mapped_column(Integer, default=0)
+
     afternoon_cash: Mapped[float] = mapped_column(Float, default=0)
     afternoon_card: Mapped[float] = mapped_column(Float, default=0)
     afternoon_bizum: Mapped[float] = mapped_column(Float, default=0)
     afternoon_bonos: Mapped[float] = mapped_column(Float, default=0)
     afternoon_total: Mapped[float] = mapped_column(Float, default=0)
 
+    afternoon_cash_customers: Mapped[int] = mapped_column(Integer, default=0)
+    afternoon_card_customers: Mapped[int] = mapped_column(Integer, default=0)
+    afternoon_bizum_customers: Mapped[int] = mapped_column(Integer, default=0)
+    afternoon_bonos_customers: Mapped[int] = mapped_column(Integer, default=0)
+    afternoon_customers_total: Mapped[int] = mapped_column(Integer, default=0)
+
     total_sales: Mapped[float] = mapped_column(Float, default=0)
     daily_expenses_total: Mapped[float] = mapped_column(Float, default=0)
     daily_balance: Mapped[float] = mapped_column(Float, default=0)
-
-    customers: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    customers_total: Mapped[int] = mapped_column(Integer, default=0)

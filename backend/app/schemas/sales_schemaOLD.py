@@ -26,9 +26,13 @@ class DailySaleUpsert(BaseModel):
 
     morning_cash: float = Field(default=0, ge=0)
     morning_card: float = Field(default=0, ge=0)
+    morning_bizum: float = Field(default=0, ge=0)
+    morning_bonos: float = Field(default=0, ge=0)
 
     afternoon_cash: float = Field(default=0, ge=0)
     afternoon_card: float = Field(default=0, ge=0)
+    afternoon_bizum: float = Field(default=0, ge=0)
+    afternoon_bonos: float = Field(default=0, ge=0)
 
     worked: bool = True
     customers: int | None = Field(default=None, ge=0)
@@ -37,12 +41,12 @@ class DailySaleUpsert(BaseModel):
     @computed_field
     @property
     def morning_total(self) -> float:
-        return round(self.morning_cash + self.morning_card, 2)
+        return round(self.morning_cash + self.morning_card + self.morning_bizum + self.morning_bonos, 2)
 
     @computed_field
     @property
     def afternoon_total(self) -> float:
-        return round(self.afternoon_cash + self.afternoon_card, 2)
+        return round(self.afternoon_cash + self.afternoon_card + self.afternoon_bizum + self.afternoon_bonos, 2)
 
     @computed_field
     @property
@@ -56,10 +60,14 @@ class DailySaleRead(BaseModel):
 
     morning_cash: float
     morning_card: float
+    morning_bizum: float
+    morning_bonos: float
     morning_total: float
 
     afternoon_cash: float
     afternoon_card: float
+    afternoon_bizum: float
+    afternoon_bonos: float
     afternoon_total: float
 
     total_sales: float
@@ -127,10 +135,14 @@ class SaleChangeLogRead(BaseModel):
 
     morning_cash: float
     morning_card: float
+    morning_bizum: float
+    morning_bonos: float
     morning_total: float
 
     afternoon_cash: float
     afternoon_card: float
+    afternoon_bizum: float
+    afternoon_bonos: float
     afternoon_total: float
 
     total_sales: float

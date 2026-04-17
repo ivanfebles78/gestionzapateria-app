@@ -29,13 +29,22 @@ class DailySaleUpsert(BaseModel):
     morning_bizum: float = Field(default=0, ge=0)
     morning_bonos: float = Field(default=0, ge=0)
 
+    morning_cash_customers: int = Field(default=0, ge=0)
+    morning_card_customers: int = Field(default=0, ge=0)
+    morning_bizum_customers: int = Field(default=0, ge=0)
+    morning_bonos_customers: int = Field(default=0, ge=0)
+
     afternoon_cash: float = Field(default=0, ge=0)
     afternoon_card: float = Field(default=0, ge=0)
     afternoon_bizum: float = Field(default=0, ge=0)
     afternoon_bonos: float = Field(default=0, ge=0)
 
+    afternoon_cash_customers: int = Field(default=0, ge=0)
+    afternoon_card_customers: int = Field(default=0, ge=0)
+    afternoon_bizum_customers: int = Field(default=0, ge=0)
+    afternoon_bonos_customers: int = Field(default=0, ge=0)
+
     worked: bool = True
-    customers: int | None = Field(default=None, ge=0)
     extended_schedule: bool = False
 
     @computed_field
@@ -53,6 +62,27 @@ class DailySaleUpsert(BaseModel):
     def total_sales(self) -> float:
         return round(self.morning_total + self.afternoon_total, 2)
 
+    @computed_field
+    @property
+    def morning_customers_total(self) -> int:
+        return (
+            self.morning_cash_customers + self.morning_card_customers +
+            self.morning_bizum_customers + self.morning_bonos_customers
+        )
+
+    @computed_field
+    @property
+    def afternoon_customers_total(self) -> int:
+        return (
+            self.afternoon_cash_customers + self.afternoon_card_customers +
+            self.afternoon_bizum_customers + self.afternoon_bonos_customers
+        )
+
+    @computed_field
+    @property
+    def customers_total(self) -> int:
+        return self.morning_customers_total + self.afternoon_customers_total
+
 
 class DailySaleRead(BaseModel):
     id: int
@@ -64,18 +94,30 @@ class DailySaleRead(BaseModel):
     morning_bonos: float
     morning_total: float
 
+    morning_cash_customers: int
+    morning_card_customers: int
+    morning_bizum_customers: int
+    morning_bonos_customers: int
+    morning_customers_total: int
+
     afternoon_cash: float
     afternoon_card: float
     afternoon_bizum: float
     afternoon_bonos: float
     afternoon_total: float
 
+    afternoon_cash_customers: int
+    afternoon_card_customers: int
+    afternoon_bizum_customers: int
+    afternoon_bonos_customers: int
+    afternoon_customers_total: int
+
     total_sales: float
     daily_expenses_total: float
     daily_balance: float
+    customers_total: int
 
     worked: bool
-    customers: int | None
     extended_schedule: bool
     is_locked: bool
 
@@ -115,6 +157,19 @@ class MonthlySummary(BaseModel):
     target_progress_pct: int
 
 
+class PaymentMethodShare(BaseModel):
+    method: str
+    amount_total: float
+    amount_pct: float
+    customers_total: int
+    customers_pct: float
+
+
+class CustomerTrafficSlot(BaseModel):
+    slot: str
+    customers_total: int
+
+
 class DashboardStats(BaseModel):
     daily_target_rate: int
     monthly_target_rate: int
@@ -123,6 +178,8 @@ class DashboardStats(BaseModel):
     morning_wins: int
     afternoon_wins: int
     monthly_summaries: list[MonthlySummary]
+    payment_method_stats: list[PaymentMethodShare]
+    customer_traffic: list[CustomerTrafficSlot]
 
 
 class SaleChangeLogRead(BaseModel):
@@ -138,18 +195,27 @@ class SaleChangeLogRead(BaseModel):
     morning_bizum: float
     morning_bonos: float
     morning_total: float
+    morning_cash_customers: int
+    morning_card_customers: int
+    morning_bizum_customers: int
+    morning_bonos_customers: int
+    morning_customers_total: int
 
     afternoon_cash: float
     afternoon_card: float
     afternoon_bizum: float
     afternoon_bonos: float
     afternoon_total: float
+    afternoon_cash_customers: int
+    afternoon_card_customers: int
+    afternoon_bizum_customers: int
+    afternoon_bonos_customers: int
+    afternoon_customers_total: int
 
     total_sales: float
     daily_expenses_total: float
     daily_balance: float
-
-    customers: int | None
+    customers_total: int
 
     class Config:
         from_attributes = True
