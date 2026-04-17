@@ -1,71 +1,27 @@
 from datetime import date, datetime
-
 from pydantic import BaseModel, Field, computed_field
-
-
-class DailyExpenseCreate(BaseModel):
-    sale_date: date
-    concept: str = Field(min_length=1, max_length=255)
-    amount: float = Field(ge=0)
-
-
-class DailyExpenseRead(BaseModel):
-    id: int
-    sale_date: date
-    concept: str
-    amount: float
-    created_by_user_id: int | None
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
 
 
 class DailySaleUpsert(BaseModel):
     sale_date: date
-
-    morning_cash: float = Field(default=0, ge=0)
-    morning_card: float = Field(default=0, ge=0)
-
-    afternoon_cash: float = Field(default=0, ge=0)
-    afternoon_card: float = Field(default=0, ge=0)
-
+    morning_sales: float = Field(default=0, ge=0)
+    afternoon_sales: float = Field(default=0, ge=0)
     worked: bool = True
     customers: int | None = Field(default=None, ge=0)
     extended_schedule: bool = False
 
     @computed_field
     @property
-    def morning_total(self) -> float:
-        return round(self.morning_cash + self.morning_card, 2)
-
-    @computed_field
-    @property
-    def afternoon_total(self) -> float:
-        return round(self.afternoon_cash + self.afternoon_card, 2)
-
-    @computed_field
-    @property
     def total_sales(self) -> float:
-        return round(self.morning_total + self.afternoon_total, 2)
+        return round(self.morning_sales + self.afternoon_sales, 2)
 
 
 class DailySaleRead(BaseModel):
     id: int
     sale_date: date
-
-    morning_cash: float
-    morning_card: float
-    morning_total: float
-
-    afternoon_cash: float
-    afternoon_card: float
-    afternoon_total: float
-
+    morning_sales: float
+    afternoon_sales: float
     total_sales: float
-    daily_expenses_total: float
-    daily_balance: float
-
     worked: bool
     customers: int | None
     extended_schedule: bool
@@ -124,19 +80,8 @@ class SaleChangeLogRead(BaseModel):
     changed_by_user_id: int | None
     changed_by_display_name: str
     action: str
-
-    morning_cash: float
-    morning_card: float
-    morning_total: float
-
-    afternoon_cash: float
-    afternoon_card: float
-    afternoon_total: float
-
-    total_sales: float
-    daily_expenses_total: float
-    daily_balance: float
-
+    morning_sales: float
+    afternoon_sales: float
     customers: int | None
 
     class Config:

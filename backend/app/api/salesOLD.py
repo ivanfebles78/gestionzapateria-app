@@ -9,7 +9,6 @@ from app.db.deps import get_db
 from app.models import (
     AdminNotification,
     AppSetting,
-    DailyExpense,
     DailySale,
     MonthlyExpense,
     SaleChangeLog,
@@ -19,8 +18,6 @@ from app.schemas.sales import (
     AdminNotificationRead,
     AppSettingsRead,
     AppSettingsUpdate,
-    DailyExpenseCreate,
-    DailyExpenseRead,
     DailySaleRead,
     DailySaleUpsert,
     DashboardStats,
@@ -46,40 +43,25 @@ def get_or_create_settings(db: Session) -> AppSetting:
     return settings
 
 
-def refresh_daily_totals(db: Session, sale: DailySale) -> None:
-    expenses = db.query(DailyExpense).filter(DailyExpense.sale_date == sale.sale_date).all()
-    daily_expenses_total = round(sum(item.amount for item in expenses), 2)
-
-    sale.morning_total = round(sale.morning_cash + sale.morning_card, 2)
-    sale.afternoon_total = round(sale.afternoon_cash + sale.afternoon_card, 2)
-    sale.total_sales = round(sale.morning_total + sale.afternoon_total, 2)
-    sale.daily_expenses_total = daily_expenses_total
-    sale.daily_balance = round(sale.total_sales - sale.daily_expenses_total, 2)
-
-
 def create_sale_log(
     db: Session,
     *,
-    sale: DailySale,
+    sale_date: date,
     user: User,
     action: str,
+    morning_sales: float,
+    afternoon_sales: float,
+    customers: int | None,
 ) -> None:
     log = SaleChangeLog(
-        sale_date=sale.sale_date,
+        sale_date=sale_date,
         changed_at=datetime.utcnow(),
         changed_by_user_id=user.id,
         changed_by_display_name=user.display_name,
         action=action,
-        morning_cash=sale.morning_cash,
-        morning_card=sale.morning_card,
-        morning_total=sale.morning_total,
-        afternoon_cash=sale.afternoon_cash,
-        afternoon_card=sale.afternoon_card,
-        afternoon_total=sale.afternoon_total,
-        total_sales=sale.total_sales,
-        daily_expenses_total=sale.daily_expenses_total,
-        daily_balance=sale.daily_balance,
-        customers=sale.customers,
+        morning_sales=morning_sales,
+        afternoon_sales=afternoon_sales,
+        customers=customers,
     )
     db.add(log)
 
@@ -158,23 +140,23 @@ def upsert_daily_sale(
         sale = DailySale(sale_date=payload.sale_date)
         db.add(sale)
 
-    sale.morning_cash = payload.morning_cash
-    sale.morning_card = payload.morning_card
-    sale.afternoon_cash = payload.afternoon_cash
-    sale.afternoon_card = payload.afternoon_card
+    sale.morning_sales = payload.morning_sales
+    sale.afternoon_sales = payload.afternoon_sales
+    sale.total_sales = payload.total_sales
     sale.worked = payload.worked
     sale.customers = payload.customers
     sale.extended_schedule = payload.extended_schedule
     sale.updated_by_user_id = user.id
     sale.is_locked = True
 
-    refresh_daily_totals(db, sale)
-
     create_sale_log(
         db,
-        sale=sale,
+        sale_date=payload.sale_date,
         user=user,
         action='update' if already_existed else 'create',
+        morning_sales=payload.morning_sales,
+        afternoon_sales=payload.afternoon_sales,
+        customers=payload.customers,
     )
 
     if already_existed:
@@ -183,8 +165,8 @@ def upsert_daily_sale(
             title='Día editado',
             message=(
                 f'{user.display_name} modificó el día {payload.sale_date.isoformat()} '
-                f'(mañana: {sale.morning_total:.2f}, tarde: {sale.afternoon_total:.2f}, '
-                f'gastos: {sale.daily_expenses_total:.2f}, balance: {sale.daily_balance:.2f}).'
+                f'(mañana: {payload.morning_sales:.2f}, tarde: {payload.afternoon_sales:.2f}, '
+                f'clientes: {payload.customers if payload.customers is not None else 0}).'
             ),
             user=user,
             sale_date=payload.sale_date,
@@ -212,66 +194,6 @@ def unlock_daily_sale(
     db.commit()
     db.refresh(sale)
     return sale
-
-
-@router.get('/daily-expenses', response_model=list[DailyExpenseRead])
-def list_daily_expenses(
-    sale_date: date | None = Query(default=None),
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    query = db.query(DailyExpense)
-    if sale_date:
-        query = query.filter(DailyExpense.sale_date == sale_date)
-    return query.order_by(DailyExpense.created_at.desc()).all()
-
-
-@router.post('/daily-expenses', response_model=DailyExpenseRead)
-def create_daily_expense(
-    payload: DailyExpenseCreate,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    if payload.sale_date > date.today():
-        raise HTTPException(status_code=400, detail='No se pueden registrar gastos para fechas futuras')
-
-    sale = db.query(DailySale).filter(DailySale.sale_date == payload.sale_date).first()
-    if not sale:
-        sale = DailySale(
-            sale_date=payload.sale_date,
-            worked=not (payload.sale_date.weekday() == 6),
-            extended_schedule=False,
-        )
-        db.add(sale)
-        db.flush()
-
-    expense = DailyExpense(
-        sale_date=payload.sale_date,
-        concept=payload.concept.strip(),
-        amount=payload.amount,
-        created_by_user_id=user.id,
-    )
-    db.add(expense)
-    db.flush()
-
-    refresh_daily_totals(db, sale)
-    create_sale_log(db, sale=sale, user=user, action='update')
-
-    create_admin_notification(
-        db,
-        title='Gasto diario añadido',
-        message=(
-            f'{user.display_name} añadió un gasto al día {payload.sale_date.isoformat()} '
-            f'por {payload.amount:.2f} € ({payload.concept}).'
-        ),
-        user=user,
-        sale_date=payload.sale_date,
-        notification_type='daily_expense_added',
-    )
-
-    db.commit()
-    db.refresh(expense)
-    return expense
 
 
 @router.get('/monthly-expenses', response_model=list[MonthlyExpenseRead])
@@ -362,7 +284,6 @@ def dashboard_stats(db: Session = Depends(get_db), user: User = Depends(get_curr
     for sale in daily_sales:
         month_key = sale.sale_date.strftime('%Y-%m')
         monthly_sales_map[month_key] += sale.total_sales
-
         weekday = sale.sale_date.strftime('%A').lower()
         weekday_es = {
             'monday': 'lunes',
@@ -376,19 +297,22 @@ def dashboard_stats(db: Session = Depends(get_db), user: User = Depends(get_curr
 
         sale_total_for_weekday = sale.total_sales
 
+        # Si el horario ampliado NO está habilitado:
+        # - no contar domingos
+        # - el sábado por la tarde no debe influir
         if not extended_schedule_enabled:
             if weekday_es == 'domingo':
                 continue
             if weekday_es == 'sábado':
-                sale_total_for_weekday = sale.morning_total
+                sale_total_for_weekday = sale.morning_sales
 
         weekday_totals[weekday_es] += sale_total_for_weekday
 
         if sale.total_sales >= DAILY_TARGET:
             daily_target_hits += 1
-        if sale.morning_total > sale.afternoon_total:
+        if sale.morning_sales > sale.afternoon_sales:
             morning_wins += 1
-        elif sale.afternoon_total > sale.morning_total:
+        elif sale.afternoon_sales > sale.morning_sales:
             afternoon_wins += 1
 
     monthly_expense_map: dict[str, float] = defaultdict(float)
