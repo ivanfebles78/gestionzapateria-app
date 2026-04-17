@@ -14,10 +14,14 @@ class DailySale(Base):
 
     morning_cash: Mapped[float] = mapped_column(Float, default=0)
     morning_card: Mapped[float] = mapped_column(Float, default=0)
+    morning_bizum: Mapped[float] = mapped_column(Float, default=0)
+    morning_bonos: Mapped[float] = mapped_column(Float, default=0)
     morning_total: Mapped[float] = mapped_column(Float, default=0)
 
     afternoon_cash: Mapped[float] = mapped_column(Float, default=0)
     afternoon_card: Mapped[float] = mapped_column(Float, default=0)
+    afternoon_bizum: Mapped[float] = mapped_column(Float, default=0)
+    afternoon_bonos: Mapped[float] = mapped_column(Float, default=0)
     afternoon_total: Mapped[float] = mapped_column(Float, default=0)
 
     total_sales: Mapped[float] = mapped_column(Float, default=0)
