@@ -655,31 +655,45 @@ export default function App() {
                 </div>
 
                 {/* TARDE */}
-                <div className="form-block afternoon stack">
-                  <h3 style={{ color: '#a78bfa', fontSize: '14px', marginBottom: 4 }}>🌆 Tarde {isSatOff ? '(deshabilitada)' : ''}</h3>
-                  {PAYMENT_METHODS.map(m => (
-                    <div key={`af-${m.key}`} className="method-row">
-                      <span className="method-dot" style={{ background: METHOD_COLORS[m.key] }} />
-                      <label style={{ flex: 1 }}>
-                        <span style={{ fontSize: '12px', color: 'var(--muted)' }}>{m.label} (€)</span>
-                        <input type="number" min="0" step="0.01" disabled={!isEditing || isSatOff}
-                          value={isSatOff ? '' : form[`afternoon_${m.key}`]}
-                          onChange={e => setForm(p => ({ ...p, [`afternoon_${m.key}`]: e.target.value }))} />
-                      </label>
-                      <label style={{ width: 80 }}>
-                        <span style={{ fontSize: '12px', color: 'var(--muted)' }}>Clientes</span>
-                        <input type="number" min="0" step="1" disabled={!isEditing || isSatOff}
-                          value={isSatOff ? '' : form[`afternoon_${m.key}_customers`]}
-                          onChange={e => setForm(p => ({ ...p, [`afternoon_${m.key}_customers`]: e.target.value }))} />
-                      </label>
-                    </div>
-                  ))}
-                  <div className="totals-row">
-                    <span className="muted" style={{ fontSize: '13px' }}>Total tarde</span>
-                    <strong style={{ color: '#a78bfa' }}>{isSatOff ? '—' : money(afternoon.salesTotal)}</strong>
-                    <span className="muted" style={{ fontSize: '13px' }}>Clientes: <strong style={{ color: 'var(--text)' }}>{isSatOff ? '—' : afternoon.customersTotal}</strong></span>
-                  </div>
-                </div>
+				{!isSatOff ? (
+				  <div className="form-block afternoon stack">
+					<h3 style={{ color: '#a78bfa', fontSize: '14px', marginBottom: 4 }}>🌆 Tarde</h3>
+					{PAYMENT_METHODS.map(m => (
+					  <div key={`af-${m.key}`} className="method-row">
+						<span className="method-dot" style={{ background: METHOD_COLORS[m.key] }} />
+						<label style={{ flex: 1 }}>
+						  <span style={{ fontSize: '12px', color: 'var(--muted)' }}>{m.label} (€)</span>
+						  <input
+							type="number"
+							min="0"
+							step="0.01"
+							disabled={!isEditing}
+							value={form[`afternoon_${m.key}`]}
+							onChange={e => setForm(p => ({ ...p, [`afternoon_${m.key}`]: e.target.value }))}
+						  />
+						</label>
+						<label style={{ width: 80 }}>
+						  <span style={{ fontSize: '12px', color: 'var(--muted)' }}>Clientes</span>
+						  <input
+							type="number"
+							min="0"
+							step="1"
+							disabled={!isEditing}
+							value={form[`afternoon_${m.key}_customers`]}
+							onChange={e => setForm(p => ({ ...p, [`afternoon_${m.key}_customers`]: e.target.value }))}
+						  />
+						</label>
+					  </div>
+					))}
+					<div className="totals-row">
+					  <span className="muted" style={{ fontSize: '13px' }}>Total tarde</span>
+					  <strong style={{ color: '#a78bfa' }}>{money(afternoon.salesTotal)}</strong>
+					  <span className="muted" style={{ fontSize: '13px' }}>
+						Clientes: <strong style={{ color: 'var(--text)' }}>{afternoon.customersTotal}</strong>
+					  </span>
+					</div>
+				  </div>
+				) : null}
               </div>
 
               {/* Day summary strip */}
@@ -735,44 +749,44 @@ export default function App() {
               <div style={{ overflowX: 'auto' }}>
                 <table className="sales-table">
                   <thead>
-                    <tr>
-                      <th rowSpan={2} className="date-col" style={{ verticalAlign: 'bottom' }}>Fecha</th>
-                      <th colSpan={5} className="table-group-header morning-col">☀️ Mañana</th>
-                      <th colSpan={5} className="table-group-header afternoon-col">🌆 Tarde</th>
-                      <th rowSpan={2} className="expense-col" style={{ verticalAlign: 'bottom' }}>Gastos</th>
-                      <th rowSpan={2} className="balance-col" style={{ verticalAlign: 'bottom' }}>Balance</th>
-                      <th rowSpan={2} className="total-col" style={{ verticalAlign: 'bottom' }}>Total</th>
-                    </tr>
-                    <tr>
-                      <th className="morning-col">Ef.</th>
-                      <th className="morning-col">Tar.</th>
-                      <th className="morning-col">Biz.</th>
-                      <th className="morning-col">Bon.</th>
-                      <th className="total-col">Cli.</th>
-                      <th className="afternoon-col">Ef.</th>
-                      <th className="afternoon-col">Tar.</th>
-                      <th className="afternoon-col">Biz.</th>
-                      <th className="afternoon-col">Bon.</th>
-                      <th className="total-col">Cli.</th>
-                    </tr>
-                  </thead>
+				  <tr>
+					<th rowSpan={2} className="date-col" style={{ verticalAlign: 'bottom' }}>Fecha</th>
+					<th colSpan={5} className="table-group-header morning-col">☀️ Mañana</th>
+					<th colSpan={5} className="table-group-header afternoon-col">🌆 Tarde</th>
+					<th rowSpan={2} className="expense-col" style={{ verticalAlign: 'bottom' }}>Gastos</th>
+					<th rowSpan={2} className="balance-col" style={{ verticalAlign: 'bottom' }}>Total</th>
+				  </tr>
+				  <tr>
+					<th className="morning-col">Ef.</th>
+					<th className="morning-col">Tar.</th>
+					<th className="morning-col">Biz.</th>
+					<th className="morning-col">Bon.</th>
+					<th className="total-col">Total</th>
+					<th className="afternoon-col">Ef.</th>
+					<th className="afternoon-col">Tar.</th>
+					<th className="afternoon-col">Biz.</th>
+					<th className="afternoon-col">Bon.</th>
+					<th className="total-col">Total</th>
+				  </tr>
+				</thead>
                   <tbody>
                     {visibleDailyRows.map(row => (
                       <tr key={row.id}>
                         <td className="date-col">{formatDate(row.sale_date)}</td>
                         <td className="morning-col">{money(row.morning_cash)}</td>
-                        <td className="morning-col">{money(row.morning_card)}</td>
-                        <td className="morning-col">{money(row.morning_bizum || 0)}</td>
-                        <td className="morning-col">{money(row.morning_bonos || 0)}</td>
-                        <td className="total-col">{row.morning_customers_total || 0}</td>
-                        <td className="afternoon-col">{money(row.afternoon_cash)}</td>
-                        <td className="afternoon-col">{money(row.afternoon_card)}</td>
-                        <td className="afternoon-col">{money(row.afternoon_bizum || 0)}</td>
-                        <td className="afternoon-col">{money(row.afternoon_bonos || 0)}</td>
-                        <td className="total-col">{row.afternoon_customers_total || 0}</td>
-                        <td className="expense-col">{money(row.daily_expenses_total)}</td>
-                        <td className={row.daily_balance >= 0 ? 'balance-positive' : 'balance-negative'}>{money(row.daily_balance)}</td>
-                        <td className="total-col">{money(row.total_sales)}</td>
+						<td className="morning-col">{money(row.morning_card)}</td>
+						<td className="morning-col">{money(row.morning_bizum || 0)}</td>
+						<td className="morning-col">{money(row.morning_bonos || 0)}</td>
+						<td className="total-col">{money(row.morning_total || 0)}</td>
+						<td className="afternoon-col">{money(row.afternoon_cash)}</td>
+						<td className="afternoon-col">{money(row.afternoon_card)}</td>
+						<td className="afternoon-col">{money(row.afternoon_bizum || 0)}</td>
+						<td className="afternoon-col">{money(row.afternoon_bonos || 0)}</td>
+						<td className="total-col">{money(row.afternoon_total || 0)}</td>
+						<td className="expense-col">{money(row.daily_expenses_total || 0)}</td>
+						<td className={row.daily_balance >= 0 ? 'balance-col balance-positive' : 'balance-col balance-negative'}>
+						  {money(row.daily_balance || 0)}
+						</td>
                       </tr>
                     ))}
                   </tbody>
