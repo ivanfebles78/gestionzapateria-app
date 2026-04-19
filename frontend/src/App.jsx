@@ -42,9 +42,26 @@ function ChevronR({ size = 14 }) {
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 function money(n) {
-  return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(Number(n || 0))
+  return new Intl.NumberFormat('es-ES', {
+    style: 'currency',
+    currency: 'EUR',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(Number(n || 0))
 }
-function formatDate(d) { return new Date(`${d}T12:00:00`).toLocaleDateString('es-ES') }
+
+function formatNumber(n) {
+  return new Intl.NumberFormat('es-ES').format(Number(n || 0))
+}
+
+function formatDate(d) {
+  return new Date(`${d}T12:00:00`).toLocaleDateString('es-ES')
+}
+
+function formatWeekday(d) {
+  return new Date(`${d}T12:00:00`).toLocaleDateString('es-ES', { weekday: 'long' })
+}
+
 function formatDateTime(v) { return new Date(v).toLocaleString('es-ES') }
 function getTodayKey() { return new Date().toISOString().slice(0, 10) }
 function addDays(dateStr, days) {
@@ -579,7 +596,8 @@ export default function App() {
           <>
             <section className="card stack section-block">
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
-                <h2>Registro de ventas — {formatDate(selectedDate)}</h2>
+                <h2>Registro de ventas — {formatDate(selectedDate)} ({formatWeekday(selectedDate)})
+				</h2>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                   {/* Edit / cancel button — small, inline */}
                   {showEditButton ? (
@@ -608,15 +626,37 @@ export default function App() {
                     onClick={() => setSelectedDate(prev => nextAllowedDate(prev, -1, ext))}>
                     <ChevronL />
                   </button>
-                  <input type="date" className="date-input" value={selectedDate} min={STORE_OPEN_DATE} max={getTodayKey()}
-                    onChange={e => {
-                      const raw = e.target.value
-                      if (isFutureDate(raw)) { setError('No se pueden registrar ventas para fechas futuras.'); setSelectedDate(getTodayKey()); return }
-                      if (raw < STORE_OPEN_DATE) { setError('No hay datos antes de la apertura (16/04/2026).'); setSelectedDate(STORE_OPEN_DATE); return }
-                      setSelectedDate(normalizeDate(raw, ext))
-                    }} />
+                  <input
+					  type="date"
+					  className="date-input"
+					  value={selectedDate}
+					  min={STORE_OPEN_DATE}
+					  max={getTodayKey()}
+					  onChange={e => {
+						const raw = e.target.value
+
+						if (isFutureDate(raw)) {
+						  setError('No se pueden registrar ventas para fechas futuras.')
+						  setSelectedDate(getTodayKey())
+						  return
+						}
+
+						if (raw < STORE_OPEN_DATE) {
+						  setError('No hay datos antes de la apertura (16/04/2026).')
+						  setSelectedDate(STORE_OPEN_DATE)
+						  return
+						}
+
+						if (!ext && isSunday(raw)) {
+						  setError('Los domingos no se pueden seleccionar si el horario extendido no está activado.')
+						  return
+						}
+
+						setSelectedDate(normalizeDate(raw, ext))
+					  }}
+					/>
                   <button type="button" className="secondary nav-btn" disabled={selectedDate >= getTodayKey()}
-                    onClick={() => setSelectedDate(prev => clampToToday(nextAllowedDate(prev, 1, ext)))}>
+                    onClick={() => setSelectedDate(prev => clampToToday(nextAllowedDate(prev, 1, ext)))}
                     <ChevronR />
                   </button>
                   <button type="button" className="secondary btn-sm" onClick={() => setSelectedDate(getTodayKey())}>Hoy</button>
@@ -712,7 +752,7 @@ export default function App() {
                 </div>
                 <div className="day-kpi">
                   <span>Clientes</span>
-                  <strong>{totalCustomers}</strong>
+                  <strong>{formatNumber(totalCustomers)}</strong>
                 </div>
               </div>
 
