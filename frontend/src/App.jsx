@@ -648,6 +648,7 @@ export default function App() {
 						}
 
 						if (!ext && isSunday(raw)) {
+						  setSelectedDate(normalizeDate(raw, ext))
 						  setError('Los domingos no se pueden seleccionar si el horario extendido no está activado.')
 						  return
 						}
@@ -656,7 +657,7 @@ export default function App() {
 					  }}
 					/>
                   <button type="button" className="secondary nav-btn" disabled={selectedDate >= getTodayKey()}
-                    onClick={() => setSelectedDate(prev => clampToToday(nextAllowedDate(prev, 1, ext)))}
+                    onClick={() => setSelectedDate(prev => clampToToday(nextAllowedDate(prev, 1, ext)))}>
                     <ChevronR />
                   </button>
                   <button type="button" className="secondary btn-sm" onClick={() => setSelectedDate(getTodayKey())}>Hoy</button>
