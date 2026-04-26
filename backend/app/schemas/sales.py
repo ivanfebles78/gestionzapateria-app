@@ -9,6 +9,11 @@ class DailyExpenseCreate(BaseModel):
     amount: float = Field(ge=0)
 
 
+class DailyExpenseUpdate(BaseModel):
+    concept: str = Field(min_length=1, max_length=255)
+    amount: float = Field(ge=0)
+
+
 class DailyExpenseRead(BaseModel):
     id: int
     sale_date: date

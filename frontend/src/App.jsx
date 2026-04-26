@@ -1,15 +1,9 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import "./styles.css";
+import { apiFetch, ApiError, getToken, setToken } from "./lib/api.js";
 
-const STORAGE_KEY = "zapateria_control_app_v1";
 const DAILY_TARGET = 500;
 const MONTHLY_TARGET = 12000;
-
-const USERS = [
-  { username: "Ivan", password: "Nicole@1", role: "admin", displayName: "Iván" },
-  { username: "Claudia", password: "Nicole@1", role: "admin", displayName: "Claudia" },
-  { username: "Tienda", password: "tienda", role: "store", displayName: "Tienda" },
-];
 
 const expenseCategories = [
   "Alquiler",
@@ -26,13 +20,20 @@ const PAYMENT_METHODS = [
   { key: "cash", label: "Efectivo" },
   { key: "card", label: "Tarjeta" },
   { key: "bizum", label: "Bizum" },
-  { key: "transfer", label: "Transferencia" },
+  { key: "bonos", label: "Bonos" },
 ];
 
-const EMPTY_SHIFT = { cash: "", card: "", bizum: "", transfer: "" };
+function emptyShift() {
+  return { cash: "", card: "", bizum: "", bonos: "" };
+}
 
-function formatDate(date) {
-  return new Date(`${date}T12:00:00`).toLocaleDateString("es-ES");
+function emptyCustomers() {
+  return { cash: 0, card: 0, bizum: 0, bonos: 0 };
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return "";
+  return new Date(`${dateStr}T12:00:00`).toLocaleDateString("es-ES");
 }
 
 function getTodayKey() {
@@ -49,7 +50,6 @@ function addDays(dateStr, days) {
 function getWeekdayIndex(dateStr) {
   return new Date(`${dateStr}T12:00:00`).getDay();
 }
-
 function isSunday(dateStr) { return getWeekdayIndex(dateStr) === 0; }
 function isSaturday(dateStr) { return getWeekdayIndex(dateStr) === 6; }
 
@@ -90,8 +90,8 @@ function getWeekdayName(dateStr) {
   return new Date(`${dateStr}T12:00:00`).toLocaleDateString("es-ES", { weekday: "long" });
 }
 
-function amount(value) {
-  const n = Number(value);
+function num(v) {
+  const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
 
@@ -103,213 +103,69 @@ function money(n) {
   }).format(Number(n || 0));
 }
 
-// ── Migración de turnos ─────────────────────────────────────
-// Antes: morning/afternoon eran strings ("300"). Ahora son objetos
-// con desglose por método de pago. Conservamos el dato vertiendo el
-// total antiguo en "Efectivo" por defecto.
-function migrateShift(value) {
-  if (value == null) return { ...EMPTY_SHIFT };
-  if (typeof value === "object" && !Array.isArray(value)) {
-    return {
-      cash: value.cash ?? "",
-      card: value.card ?? "",
-      bizum: value.bizum ?? "",
-      transfer: value.transfer ?? "",
-    };
-  }
-  const legacy = String(value);
-  return { cash: legacy, card: "", bizum: "", transfer: "" };
-}
-
-function migrateSalesByDay(raw) {
-  if (!raw || typeof raw !== "object") return {};
-  const result = {};
-  for (const [date, entry] of Object.entries(raw)) {
-    result[date] = {
-      morning: migrateShift(entry?.morning),
-      afternoon: migrateShift(entry?.afternoon),
-    };
-  }
-  return result;
-}
-
-function shiftTotal(shift) {
+function shiftAmountTotal(shift) {
   if (!shift) return 0;
-  return amount(shift.cash) + amount(shift.card) + amount(shift.bizum) + amount(shift.transfer);
+  return num(shift.cash) + num(shift.card) + num(shift.bizum) + num(shift.bonos);
 }
 
-function dayTotal(entry, opts = {}) {
-  if (!entry) return 0;
-  const morning = shiftTotal(entry.morning);
-  const afternoon = opts.skipAfternoon ? 0 : shiftTotal(entry.afternoon);
-  return morning + afternoon;
-}
-
-function createDefaultState() {
-  const today = getTodayKey();
+// Convierte un DailySale del backend al estado local (mañana/tarde con strings editables).
+function saleToLocal(sale) {
   return {
-    salesByDay: {
-      [today]: { morning: { ...EMPTY_SHIFT }, afternoon: { ...EMPTY_SHIFT } },
+    sale_date: sale.sale_date,
+    morning: {
+      cash: String(sale.morning_cash ?? ""),
+      card: String(sale.morning_card ?? ""),
+      bizum: String(sale.morning_bizum ?? ""),
+      bonos: String(sale.morning_bonos ?? ""),
     },
-    expensesByMonth: {},
-    settings: { extendedSchedule: false },
+    afternoon: {
+      cash: String(sale.afternoon_cash ?? ""),
+      card: String(sale.afternoon_card ?? ""),
+      bizum: String(sale.afternoon_bizum ?? ""),
+      bonos: String(sale.afternoon_bonos ?? ""),
+    },
+    morning_customers: {
+      cash: sale.morning_cash_customers || 0,
+      card: sale.morning_card_customers || 0,
+      bizum: sale.morning_bizum_customers || 0,
+      bonos: sale.morning_bonos_customers || 0,
+    },
+    afternoon_customers: {
+      cash: sale.afternoon_cash_customers || 0,
+      card: sale.afternoon_card_customers || 0,
+      bizum: sale.afternoon_bizum_customers || 0,
+      bonos: sale.afternoon_bonos_customers || 0,
+    },
+    worked: sale.worked ?? true,
+    extended_schedule: sale.extended_schedule ?? false,
+    total_sales: num(sale.total_sales),
+    morning_total: num(sale.morning_total),
+    afternoon_total: num(sale.afternoon_total),
+    daily_expenses_total: num(sale.daily_expenses_total),
+    daily_balance: num(sale.daily_balance),
   };
 }
 
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return createDefaultState();
-    const parsed = JSON.parse(raw);
-    return {
-      ...createDefaultState(),
-      ...parsed,
-      salesByDay: migrateSalesByDay(parsed.salesByDay),
-      settings: {
-        ...createDefaultState().settings,
-        ...(parsed.settings || {}),
-      },
-    };
-  } catch {
-    return createDefaultState();
-  }
-}
-
-function saveState(state) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-}
-
-function getMonthlySalesMap(salesByDay) {
-  const result = {};
-  for (const [date, entry] of Object.entries(salesByDay || {})) {
-    const monthKey = getMonthKey(date);
-    result[monthKey] = (result[monthKey] || 0) + dayTotal(entry);
-  }
-  return result;
-}
-
-function getMonthlyMethodMap(salesByDay) {
-  // Devuelve por mes el desglose por método de pago.
-  const result = {};
-  for (const [date, entry] of Object.entries(salesByDay || {})) {
-    const monthKey = getMonthKey(date);
-    if (!result[monthKey]) result[monthKey] = { cash: 0, card: 0, bizum: 0, transfer: 0 };
-    for (const m of PAYMENT_METHODS) {
-      result[monthKey][m.key] += amount(entry?.morning?.[m.key]) + amount(entry?.afternoon?.[m.key]);
-    }
-  }
-  return result;
-}
-
-function normalizeExpenseRecords(expenses) {
-  if (!expenses) return [];
-  if (Array.isArray(expenses)) {
-    return expenses.filter(Boolean).map((expense, index) => ({
-      id: expense.id || `expense-${Date.now()}-${index}`,
-      category: expense.category || expense.concept || "Otros",
-      description: expense.description || "",
-      amount: String(expense.amount ?? expense.value ?? ""),
-    }));
-  }
-  return Object.entries(expenses)
-    .filter(([, value]) => amount(value) > 0)
-    .map(([category, value]) => ({
-      id: `legacy-${category}`,
-      category,
-      description: "",
-      amount: String(value),
-    }));
-}
-
-function getMonthlyExpensesTotal(expenses) {
-  return normalizeExpenseRecords(expenses).reduce((sum, e) => sum + amount(e.amount), 0);
-}
-
-function getAllMonthKeys(state) {
-  const salesMonths = Object.keys(getMonthlySalesMap(state.salesByDay || {}));
-  const expenseMonths = Object.keys(state.expensesByMonth || {});
-  return [...new Set([...salesMonths, ...expenseMonths])].sort();
-}
-
-function getStats(state) {
-  const extendedSchedule = !!state.settings?.extendedSchedule;
-  const salesEntries = Object.entries(state.salesByDay || {}).sort(([a], [b]) => a.localeCompare(b));
-  const monthlySales = getMonthlySalesMap(state.salesByDay || {});
-  const monthKeys = getAllMonthKeys(state);
-
-  const monthlyData = monthKeys.map((monthKey) => {
-    const sales = monthlySales[monthKey] || 0;
-    const expenses = getMonthlyExpensesTotal(state.expensesByMonth?.[monthKey] || {});
-    return {
-      monthKey,
-      month: getMonthLabel(monthKey),
-      ventas: sales,
-      gastos: expenses,
-      beneficio: sales - expenses,
-      cumpleObjetivo: sales >= MONTHLY_TARGET,
-    };
-  });
-
-  let daysMeetingTarget = 0;
-  let morningWins = 0;
-  let afternoonWins = 0;
-  const weekdayTotals = {};
-  const methodTotals = { cash: 0, card: 0, bizum: 0, transfer: 0 };
-
-  const dailyData = salesEntries.map(([date, entry]) => {
-    const morning = shiftTotal(entry?.morning);
-    const afternoon = !extendedSchedule && isSaturday(date) ? 0 : shiftTotal(entry?.afternoon);
-    const total = morning + afternoon;
-    const weekday = getWeekdayName(date);
-    weekdayTotals[weekday] = (weekdayTotals[weekday] || 0) + total;
-    if (total >= DAILY_TARGET) daysMeetingTarget += 1;
-    if (morning > afternoon) morningWins += 1;
-    if (afternoon > morning) afternoonWins += 1;
-    for (const m of PAYMENT_METHODS) {
-      methodTotals[m.key] += amount(entry?.morning?.[m.key]);
-      if (extendedSchedule || !isSaturday(date)) {
-        methodTotals[m.key] += amount(entry?.afternoon?.[m.key]);
-      }
-    }
-    return {
-      date,
-      fecha: formatDate(date),
-      weekday,
-      morning,
-      afternoon,
-      total,
-      cumpleObjetivo: total >= DAILY_TARGET,
-    };
-  });
-
-  const bestWeekday = Object.entries(weekdayTotals).sort((a, b) => b[1] - a[1])[0];
-  const worstWeekday = Object.entries(weekdayTotals).sort((a, b) => a[1] - b[1])[0];
-  const totalDays = dailyData.length;
-  const totalMonthly = monthlyData.length;
-  const monthsMeetingTarget = monthlyData.filter((m) => m.cumpleObjetivo).length;
-  const grandTotal = methodTotals.cash + methodTotals.card + methodTotals.bizum + methodTotals.transfer;
-
+function emptyLocalSale(dateStr) {
   return {
-    dailyData,
-    monthlyData,
-    methodTotals,
-    grandTotal,
-    overview: {
-      totalDays,
-      totalMonthly,
-      daysMeetingTarget,
-      monthsMeetingTarget,
-      dailyTargetRate: totalDays ? Math.round((daysMeetingTarget / totalDays) * 100) : 0,
-      monthlyTargetRate: totalMonthly ? Math.round((monthsMeetingTarget / totalMonthly) * 100) : 0,
-      bestWeekday: bestWeekday?.[0] || "—",
-      worstWeekday: worstWeekday?.[0] || "—",
-      bestWeekdayAmount: bestWeekday?.[1] || 0,
-      worstWeekdayAmount: worstWeekday?.[1] || 0,
-      morningWins,
-      afternoonWins,
-    },
+    sale_date: dateStr,
+    morning: emptyShift(),
+    afternoon: emptyShift(),
+    morning_customers: emptyCustomers(),
+    afternoon_customers: emptyCustomers(),
+    worked: !isSunday(dateStr),
+    extended_schedule: false,
+    total_sales: 0,
+    morning_total: 0,
+    afternoon_total: 0,
+    daily_expenses_total: 0,
+    daily_balance: 0,
   };
 }
+
+// ─────────────────────────────────────────────────
+// Componentes
+// ─────────────────────────────────────────────────
 
 function StatCard({ title, value, hint }) {
   return (
@@ -321,8 +177,8 @@ function StatCard({ title, value, hint }) {
   );
 }
 
-function ShiftPanel({ title, shift, disabled, accent, onChange }) {
-  const total = shiftTotal(shift);
+function ShiftPanel({ title, accent, shift, disabled, onChange }) {
+  const total = shiftAmountTotal(shift);
   return (
     <div className={`form-block ${accent}`}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
@@ -347,17 +203,29 @@ function ShiftPanel({ title, shift, disabled, accent, onChange }) {
   );
 }
 
-function LoginScreen({ onLogin }) {
+function LoginScreen({ onLoggedIn }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    const user = USERS.find((u) => u.username === username && u.password === password);
-    if (!user) { setError("Usuario o contraseña incorrectos."); return; }
     setError("");
-    onLogin(user);
+    setBusy(true);
+    try {
+      const res = await apiFetch("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ username, password }),
+      });
+      setToken(res.access_token);
+      const me = await apiFetch("/api/auth/me");
+      onLoggedIn(me);
+    } catch (err) {
+      setError(err.message || "Error al iniciar sesión");
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -366,176 +234,458 @@ function LoginScreen({ onLogin }) {
         <div>
           <div className="eyebrow">Zapatería · Control</div>
           <h1 style={{ marginTop: 8 }}>Acceso a la aplicación</h1>
-          <p className="muted" style={{ marginTop: 6 }}>Selecciona el usuario e introduce la contraseña.</p>
+          <p className="muted" style={{ marginTop: 6 }}>Introduce tu usuario y contraseña.</p>
         </div>
         <label>
           Usuario
-          <select value={username} onChange={(e) => setUsername(e.target.value)}>
-            <option value="">Selecciona un usuario</option>
-            {USERS.map((u) => (
-              <option key={u.username} value={u.username}>{u.displayName}</option>
-            ))}
-          </select>
+          <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Iván / Claudia / Tienda" autoFocus />
         </label>
         <label>
           Contraseña
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Introduce la contraseña" />
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Contraseña" />
         </label>
         {error ? <div className="error-box">{error}</div> : null}
-        <button type="submit">Entrar</button>
+        <button type="submit" disabled={busy}>{busy ? "Entrando..." : "Entrar"}</button>
       </form>
     </div>
   );
 }
 
+// ─────────────────────────────────────────────────
+// App
+// ─────────────────────────────────────────────────
 export default function App() {
-  const [appState, setAppState] = useState(createDefaultState());
   const [currentUser, setCurrentUser] = useState(null);
+  const [authChecking, setAuthChecking] = useState(true);
+  const [globalError, setGlobalError] = useState("");
+  const [loading, setLoading] = useState(false);
+
   const [tab, setTab] = useState("day");
+  const [extendedSchedule, setExtendedScheduleState] = useState(false);
+
+  // Estado de datos del backend
+  const [allSales, setAllSales] = useState([]); // [DailySaleRead, ...] (todas)
+  const [monthlyExpenses, setMonthlyExpenses] = useState([]); // [MonthlyExpenseRead, ...]
+
+  // Día seleccionado y su forma editable
   const [selectedDate, setSelectedDate] = useState(getTodayKey());
+  const [selectedSale, setSelectedSale] = useState(emptyLocalSale(getTodayKey()));
+  const [dailyExpensesForDay, setDailyExpensesForDay] = useState([]);
+  const [savingDay, setSavingDay] = useState(false);
+  const [dayMessage, setDayMessage] = useState("");
+
+  // Mes seleccionado para tab mensual
   const [selectedMonth, setSelectedMonth] = useState(getMonthKey(getTodayKey()));
-  const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
-  const [editingExpenseId, setEditingExpenseId] = useState(null);
-  const [expenseForm, setExpenseForm] = useState({ category: "Otros", description: "", amount: "" });
+
+  // Modal de gasto diario
+  const [dailyExpenseModal, setDailyExpenseModal] = useState(null); // null | { id?, concept, amount }
+
+  // Modal de gasto mensual
+  const [monthlyExpenseModal, setMonthlyExpenseModal] = useState(null); // null | { category, amount }
 
   const todayKey = getTodayKey();
   const currentMonthKey = getMonthKey(todayKey);
-  const extendedSchedule = !!appState.settings?.extendedSchedule;
 
+  // ─── Autenticación inicial ───
   useEffect(() => {
-    const loaded = loadState();
-    setAppState(loaded);
-    setSelectedDate((prev) => normalizeDateForSchedule(prev, !!loaded.settings?.extendedSchedule));
+    let alive = true;
+    (async () => {
+      const tk = getToken();
+      if (!tk) { setAuthChecking(false); return; }
+      try {
+        const me = await apiFetch("/api/auth/me");
+        if (alive) setCurrentUser(me);
+      } catch {
+        setToken(null);
+      } finally {
+        if (alive) setAuthChecking(false);
+      }
+    })();
+    return () => { alive = false; };
   }, []);
 
-  useEffect(() => { saveState(appState); }, [appState]);
+  // ─── Carga inicial al loguearse ───
+  const reloadAll = useCallback(async () => {
+    setLoading(true);
+    setGlobalError("");
+    try {
+      const [settings, sales, mExpenses] = await Promise.all([
+        apiFetch("/api/settings"),
+        apiFetch("/api/daily-sales"),
+        apiFetch("/api/monthly-expenses"),
+      ]);
+      setExtendedScheduleState(!!settings?.extended_schedule_enabled);
+      setAllSales(Array.isArray(sales) ? sales : []);
+      setMonthlyExpenses(Array.isArray(mExpenses) ? mExpenses : []);
+    } catch (err) {
+      setGlobalError(err.message || "Error cargando datos");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    setSelectedDate((prev) => normalizeDateForSchedule(prev, extendedSchedule));
-  }, [extendedSchedule]);
+    if (!currentUser) return;
+    reloadAll();
+  }, [currentUser, reloadAll]);
 
-  const selectedDayEntry = appState.salesByDay?.[selectedDate] || { morning: { ...EMPTY_SHIFT }, afternoon: { ...EMPTY_SHIFT } };
+  // ─── Cuando cambia el día seleccionado, reflejar venta + cargar gastos del día ───
+  useEffect(() => {
+    if (!currentUser) return;
+    const found = allSales.find((s) => s.sale_date === selectedDate);
+    setSelectedSale(found ? saleToLocal(found) : emptyLocalSale(selectedDate));
+    setDayMessage("");
+    let alive = true;
+    (async () => {
+      try {
+        const list = await apiFetch(`/api/daily-expenses?sale_date=${encodeURIComponent(selectedDate)}`);
+        if (alive) setDailyExpensesForDay(Array.isArray(list) ? list : []);
+      } catch (err) {
+        if (alive) setDailyExpensesForDay([]);
+      }
+    })();
+    return () => { alive = false; };
+  }, [selectedDate, allSales, currentUser]);
+
   const isSelectedDateSaturday = isSaturday(selectedDate);
   const isSelectedDateSunday = isSunday(selectedDate);
   const isAfternoonDisabled = !extendedSchedule && isSelectedDateSaturday;
   const isDateClosed = !extendedSchedule && isSelectedDateSunday;
 
-  const morningTotal = shiftTotal(selectedDayEntry.morning);
-  const afternoonTotal = isAfternoonDisabled ? 0 : shiftTotal(selectedDayEntry.afternoon);
+  const morningTotal = shiftAmountTotal(selectedSale.morning);
+  const afternoonTotal = isAfternoonDisabled ? 0 : shiftAmountTotal(selectedSale.afternoon);
   const selectedDayTotal = morningTotal + afternoonTotal;
 
-  const viewedMonthExpenses = appState.expensesByMonth?.[selectedMonth] || [];
-  const viewedMonthExpenseRecords = normalizeExpenseRecords(viewedMonthExpenses);
-  const viewedMonthSales = getMonthlySalesMap(appState.salesByDay || {})[selectedMonth] || 0;
-  const viewedMonthExpensesTotal = getMonthlyExpensesTotal(viewedMonthExpenses);
-  const viewedMonthBalance = viewedMonthSales - viewedMonthExpensesTotal;
-  const viewedMonthMethods = getMonthlyMethodMap(appState.salesByDay || {})[selectedMonth]
-    || { cash: 0, card: 0, bizum: 0, transfer: 0 };
+  // KPIs del mes actual
+  const monthlySalesByMonth = useMemo(() => {
+    const m = {};
+    for (const s of allSales) {
+      const k = getMonthKey(s.sale_date);
+      m[k] = (m[k] || 0) + num(s.total_sales);
+    }
+    return m;
+  }, [allSales]);
 
-  const stats = useMemo(() => getStats(appState), [appState]);
+  const monthlyExpensesByMonth = useMemo(() => {
+    const m = {};
+    for (const e of monthlyExpenses) {
+      m[e.month_key] = (m[e.month_key] || 0) + num(e.amount);
+    }
+    return m;
+  }, [monthlyExpenses]);
 
-  const monthlySalesMap = getMonthlySalesMap(appState.salesByDay || {});
-  const currentMonthSales = monthlySalesMap[currentMonthKey] || 0;
-  const currentMonthExpenses = getMonthlyExpensesTotal(appState.expensesByMonth?.[currentMonthKey] || {});
+  const currentMonthSales = monthlySalesByMonth[currentMonthKey] || 0;
+  const currentMonthExpenses = monthlyExpensesByMonth[currentMonthKey] || 0;
   const currentMonthBalance = currentMonthSales - currentMonthExpenses;
 
+  // Mes visualizado
+  const viewedMonthSales = monthlySalesByMonth[selectedMonth] || 0;
+  const viewedMonthExpensesTotal = monthlyExpensesByMonth[selectedMonth] || 0;
+  const viewedMonthBalance = viewedMonthSales - viewedMonthExpensesTotal;
+  const viewedMonthExpenses = useMemo(
+    () => monthlyExpenses.filter((e) => e.month_key === selectedMonth),
+    [monthlyExpenses, selectedMonth]
+  );
+
+  // Desglose por método de pago en el mes visualizado
+  const viewedMonthMethodTotals = useMemo(() => {
+    const t = { cash: 0, card: 0, bizum: 0, bonos: 0 };
+    for (const s of allSales) {
+      if (getMonthKey(s.sale_date) !== selectedMonth) continue;
+      t.cash += num(s.morning_cash) + num(s.afternoon_cash);
+      t.card += num(s.morning_card) + num(s.afternoon_card);
+      t.bizum += num(s.morning_bizum) + num(s.afternoon_bizum);
+      t.bonos += num(s.morning_bonos) + num(s.afternoon_bonos);
+    }
+    return t;
+  }, [allSales, selectedMonth]);
+
+  // Stats globales
+  const stats = useMemo(() => {
+    const sortedSales = [...allSales].sort((a, b) => a.sale_date.localeCompare(b.sale_date));
+    let daysMeetingTarget = 0;
+    let morningWins = 0;
+    let afternoonWins = 0;
+    const weekdayTotals = {};
+    const methodTotals = { cash: 0, card: 0, bizum: 0, bonos: 0 };
+    const dailyData = sortedSales.map((s) => {
+      const total = num(s.total_sales);
+      const wd = getWeekdayName(s.sale_date);
+      weekdayTotals[wd] = (weekdayTotals[wd] || 0) + total;
+      if (total >= DAILY_TARGET) daysMeetingTarget += 1;
+      if (num(s.morning_total) > num(s.afternoon_total)) morningWins += 1;
+      if (num(s.afternoon_total) > num(s.morning_total)) afternoonWins += 1;
+      methodTotals.cash += num(s.morning_cash) + num(s.afternoon_cash);
+      methodTotals.card += num(s.morning_card) + num(s.afternoon_card);
+      methodTotals.bizum += num(s.morning_bizum) + num(s.afternoon_bizum);
+      methodTotals.bonos += num(s.morning_bonos) + num(s.afternoon_bonos);
+      return {
+        date: s.sale_date,
+        fecha: formatDate(s.sale_date),
+        weekday: wd,
+        morning: num(s.morning_total),
+        afternoon: num(s.afternoon_total),
+        total,
+        gastos: num(s.daily_expenses_total),
+        balance: num(s.daily_balance),
+        cumpleObjetivo: total >= DAILY_TARGET,
+      };
+    });
+
+    const monthKeys = Array.from(new Set([
+      ...Object.keys(monthlySalesByMonth),
+      ...Object.keys(monthlyExpensesByMonth),
+    ])).sort();
+    let monthsMeetingTarget = 0;
+    const monthlyData = monthKeys.map((k) => {
+      const ventas = monthlySalesByMonth[k] || 0;
+      const gastos = monthlyExpensesByMonth[k] || 0;
+      const cumple = ventas >= MONTHLY_TARGET;
+      if (cumple) monthsMeetingTarget += 1;
+      return {
+        monthKey: k,
+        month: getMonthLabel(k),
+        ventas,
+        gastos,
+        beneficio: ventas - gastos,
+        cumpleObjetivo: cumple,
+      };
+    });
+
+    const totalDays = dailyData.length;
+    const totalMonthly = monthlyData.length;
+    const grandTotal = methodTotals.cash + methodTotals.card + methodTotals.bizum + methodTotals.bonos;
+    const wdEntries = Object.entries(weekdayTotals);
+    const bestWeekday = wdEntries.sort((a, b) => b[1] - a[1])[0];
+    const worstWeekday = wdEntries.sort((a, b) => a[1] - b[1])[0];
+
+    return {
+      dailyData,
+      monthlyData,
+      methodTotals,
+      grandTotal,
+      overview: {
+        totalDays,
+        totalMonthly,
+        daysMeetingTarget,
+        monthsMeetingTarget,
+        dailyTargetRate: totalDays ? Math.round((daysMeetingTarget / totalDays) * 100) : 0,
+        monthlyTargetRate: totalMonthly ? Math.round((monthsMeetingTarget / totalMonthly) * 100) : 0,
+        bestWeekday: bestWeekday?.[0] || "—",
+        worstWeekday: worstWeekday?.[0] || "—",
+        bestWeekdayAmount: bestWeekday?.[1] || 0,
+        worstWeekdayAmount: worstWeekday?.[1] || 0,
+        morningWins,
+        afternoonWins,
+      },
+    };
+  }, [allSales, monthlySalesByMonth, monthlyExpensesByMonth]);
+
+  // ─── Acciones ───
   const updateShiftField = (shift, methodKey, value) => {
     const clean = value.replace(/[^0-9.,]/g, "").replace(",", ".");
-    setAppState((prev) => {
-      const prevEntry = prev.salesByDay?.[selectedDate] || { morning: { ...EMPTY_SHIFT }, afternoon: { ...EMPTY_SHIFT } };
-      return {
-        ...prev,
-        salesByDay: {
-          ...prev.salesByDay,
-          [selectedDate]: {
-            ...prevEntry,
-            [shift]: {
-              ...(prevEntry[shift] || EMPTY_SHIFT),
-              [methodKey]: clean,
-            },
-          },
-        },
-      };
-    });
-  };
-
-  const openNewExpenseModal = () => {
-    setEditingExpenseId(null);
-    setExpenseForm({ category: "Otros", description: "", amount: "" });
-    setIsExpenseModalOpen(true);
-  };
-
-  const openEditExpenseModal = (expense) => {
-    setEditingExpenseId(expense.id);
-    setExpenseForm({
-      category: expense.category || "Otros",
-      description: expense.description || "",
-      amount: String(expense.amount || ""),
-    });
-    setIsExpenseModalOpen(true);
-  };
-
-  const closeExpenseModal = () => {
-    setIsExpenseModalOpen(false);
-    setEditingExpenseId(null);
-    setExpenseForm({ category: "Otros", description: "", amount: "" });
-  };
-
-  const saveExpense = () => {
-    const cleanAmount = String(expenseForm.amount || "").replace(/[^0-9.,]/g, "").replace(",", ".");
-    if (!expenseForm.category || !cleanAmount || amount(cleanAmount) <= 0) return;
-    setAppState((prev) => {
-      const currentExpenses = normalizeExpenseRecords(prev.expensesByMonth?.[selectedMonth] || []);
-      const nextExpense = {
-        id: editingExpenseId || `expense-${Date.now()}`,
-        category: expenseForm.category,
-        description: expenseForm.description.trim(),
-        amount: cleanAmount,
-      };
-      const nextExpenses = editingExpenseId
-        ? currentExpenses.map((e) => (e.id === editingExpenseId ? nextExpense : e))
-        : [...currentExpenses, nextExpense];
-      return {
-        ...prev,
-        expensesByMonth: { ...prev.expensesByMonth, [selectedMonth]: nextExpenses },
-      };
-    });
-    closeExpenseModal();
-  };
-
-  const deleteExpense = (expenseId) => {
-    setAppState((prev) => {
-      const currentExpenses = normalizeExpenseRecords(prev.expensesByMonth?.[selectedMonth] || []);
-      return {
-        ...prev,
-        expensesByMonth: {
-          ...prev.expensesByMonth,
-          [selectedMonth]: currentExpenses.filter((e) => e.id !== expenseId),
-        },
-      };
-    });
-  };
-
-  const toggleExtendedSchedule = (checked) => {
-    setAppState((prev) => ({
+    setSelectedSale((prev) => ({
       ...prev,
-      settings: { ...(prev.settings || {}), extendedSchedule: checked },
+      [shift]: { ...prev[shift], [methodKey]: clean },
     }));
+  };
+
+  const saveDay = async () => {
+    setSavingDay(true);
+    setDayMessage("");
+    try {
+      const payload = {
+        sale_date: selectedDate,
+        morning_cash: num(selectedSale.morning.cash),
+        morning_card: num(selectedSale.morning.card),
+        morning_bizum: num(selectedSale.morning.bizum),
+        morning_bonos: num(selectedSale.morning.bonos),
+        morning_cash_customers: selectedSale.morning_customers.cash || 0,
+        morning_card_customers: selectedSale.morning_customers.card || 0,
+        morning_bizum_customers: selectedSale.morning_customers.bizum || 0,
+        morning_bonos_customers: selectedSale.morning_customers.bonos || 0,
+        afternoon_cash: isAfternoonDisabled ? 0 : num(selectedSale.afternoon.cash),
+        afternoon_card: isAfternoonDisabled ? 0 : num(selectedSale.afternoon.card),
+        afternoon_bizum: isAfternoonDisabled ? 0 : num(selectedSale.afternoon.bizum),
+        afternoon_bonos: isAfternoonDisabled ? 0 : num(selectedSale.afternoon.bonos),
+        afternoon_cash_customers: selectedSale.afternoon_customers.cash || 0,
+        afternoon_card_customers: selectedSale.afternoon_customers.card || 0,
+        afternoon_bizum_customers: selectedSale.afternoon_customers.bizum || 0,
+        afternoon_bonos_customers: selectedSale.afternoon_customers.bonos || 0,
+        worked: !isDateClosed,
+        extended_schedule: extendedSchedule,
+      };
+      const updated = await apiFetch("/api/daily-sales", {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+      setAllSales((prev) => {
+        const idx = prev.findIndex((s) => s.sale_date === updated.sale_date);
+        if (idx === -1) return [...prev, updated];
+        const copy = prev.slice();
+        copy[idx] = updated;
+        return copy;
+      });
+      setDayMessage("Guardado correctamente.");
+    } catch (err) {
+      setDayMessage(`Error al guardar: ${err.message}`);
+    } finally {
+      setSavingDay(false);
+    }
+  };
+
+  const toggleExtendedSchedule = async (checked) => {
+    try {
+      const res = await apiFetch("/api/settings", {
+        method: "PUT",
+        body: JSON.stringify({ extended_schedule_enabled: checked }),
+      });
+      setExtendedScheduleState(!!res.extended_schedule_enabled);
+    } catch (err) {
+      setGlobalError(err.message);
+    }
   };
 
   const goToPreviousAllowedDay = () => setSelectedDate((p) => getNextAllowedDate(p, -1, extendedSchedule));
   const goToNextAllowedDay = () => setSelectedDate((p) => getNextAllowedDate(p, 1, extendedSchedule));
-
   const handleDateInputChange = (value) => {
     if (!value) return;
     if (!extendedSchedule && isSunday(value)) return;
     setSelectedDate(normalizeDateForSchedule(value, extendedSchedule));
   };
 
-  if (!currentUser) return <LoginScreen onLogin={setCurrentUser} />;
+  // ─── Gastos diarios (CRUD) ───
+  const openNewDailyExpense = () => setDailyExpenseModal({ concept: "", amount: "" });
+  const openEditDailyExpense = (e) => setDailyExpenseModal({ id: e.id, concept: e.concept, amount: String(e.amount) });
+  const closeDailyExpense = () => setDailyExpenseModal(null);
+
+  const submitDailyExpense = async () => {
+    if (!dailyExpenseModal) return;
+    const concept = dailyExpenseModal.concept.trim();
+    const amount = Number(String(dailyExpenseModal.amount).replace(",", "."));
+    if (!concept || !Number.isFinite(amount) || amount < 0) {
+      setDayMessage("Concepto e importe son obligatorios.");
+      return;
+    }
+    try {
+      if (dailyExpenseModal.id) {
+        const updated = await apiFetch(`/api/daily-expenses/${dailyExpenseModal.id}`, {
+          method: "PUT",
+          body: JSON.stringify({ concept, amount }),
+        });
+        setDailyExpensesForDay((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+      } else {
+        const created = await apiFetch("/api/daily-expenses", {
+          method: "POST",
+          body: JSON.stringify({ sale_date: selectedDate, concept, amount }),
+        });
+        setDailyExpensesForDay((prev) => [created, ...prev]);
+      }
+      // El backend recalcula totales del día → recargo el día desde allSales
+      const fresh = await apiFetch(`/api/daily-sales?date_from=${selectedDate}&date_to=${selectedDate}`);
+      if (Array.isArray(fresh) && fresh[0]) {
+        setAllSales((prev) => {
+          const idx = prev.findIndex((s) => s.sale_date === fresh[0].sale_date);
+          if (idx === -1) return [...prev, fresh[0]];
+          const copy = prev.slice(); copy[idx] = fresh[0]; return copy;
+        });
+      }
+      closeDailyExpense();
+    } catch (err) {
+      setDayMessage(`Error: ${err.message}`);
+    }
+  };
+
+  const deleteDailyExpense = async (id) => {
+    if (!confirm("¿Borrar este gasto?")) return;
+    try {
+      await apiFetch(`/api/daily-expenses/${id}`, { method: "DELETE" });
+      setDailyExpensesForDay((prev) => prev.filter((e) => e.id !== id));
+      const fresh = await apiFetch(`/api/daily-sales?date_from=${selectedDate}&date_to=${selectedDate}`);
+      if (Array.isArray(fresh) && fresh[0]) {
+        setAllSales((prev) => {
+          const idx = prev.findIndex((s) => s.sale_date === fresh[0].sale_date);
+          if (idx === -1) return [...prev, fresh[0]];
+          const copy = prev.slice(); copy[idx] = fresh[0]; return copy;
+        });
+      }
+    } catch (err) {
+      setDayMessage(`Error al borrar: ${err.message}`);
+    }
+  };
+
+  // ─── Gastos mensuales (upsert por categoría) ───
+  const openMonthlyExpense = (existing) => {
+    setMonthlyExpenseModal({
+      category: existing?.category || "Otros",
+      amount: existing ? String(existing.amount) : "",
+    });
+  };
+  const closeMonthlyExpense = () => setMonthlyExpenseModal(null);
+  const submitMonthlyExpense = async () => {
+    if (!monthlyExpenseModal) return;
+    const amount = Number(String(monthlyExpenseModal.amount).replace(",", "."));
+    if (!monthlyExpenseModal.category || !Number.isFinite(amount) || amount < 0) return;
+    try {
+      const updated = await apiFetch("/api/monthly-expenses", {
+        method: "PUT",
+        body: JSON.stringify({
+          month_key: selectedMonth,
+          category: monthlyExpenseModal.category,
+          amount,
+        }),
+      });
+      setMonthlyExpenses((prev) => {
+        const idx = prev.findIndex((e) => e.month_key === updated.month_key && e.category === updated.category);
+        if (idx === -1) return [...prev, updated];
+        const copy = prev.slice(); copy[idx] = updated; return copy;
+      });
+      closeMonthlyExpense();
+    } catch (err) {
+      setGlobalError(err.message);
+    }
+  };
+  const deleteMonthlyExpense = async (existing) => {
+    if (!confirm(`¿Quitar el gasto "${existing.category}" del mes? (se pone a 0)`)) return;
+    try {
+      const updated = await apiFetch("/api/monthly-expenses", {
+        method: "PUT",
+        body: JSON.stringify({
+          month_key: existing.month_key,
+          category: existing.category,
+          amount: 0,
+        }),
+      });
+      setMonthlyExpenses((prev) => prev.map((e) =>
+        e.month_key === updated.month_key && e.category === updated.category ? updated : e
+      ));
+    } catch (err) {
+      setGlobalError(err.message);
+    }
+  };
+
+  const logout = () => {
+    setToken(null);
+    setCurrentUser(null);
+    setAllSales([]);
+    setMonthlyExpenses([]);
+    setDailyExpensesForDay([]);
+  };
+
+  // ─── Render ───
+  if (authChecking) {
+    return <div className="center-screen"><div className="muted">Cargando...</div></div>;
+  }
+
+  if (!currentUser) {
+    return <LoginScreen onLoggedIn={setCurrentUser} />;
+  }
 
   const dailyProgress = Math.min((selectedDayTotal / DAILY_TARGET) * 100, 100);
   const monthlyProgress = Math.min((viewedMonthSales / MONTHLY_TARGET) * 100, 100);
+
+  // Histórico ordenado para la tabla inferior
+  const historyDesc = [...allSales].sort((a, b) => b.sale_date.localeCompare(a.sale_date));
 
   return (
     <div className="shell">
@@ -544,14 +694,22 @@ export default function App() {
           <div className="eyebrow">Zapatería</div>
           <h1>Control de ventas, gastos y rentabilidad</h1>
           <div className="muted" style={{ marginTop: 4 }}>
-            Hoy: {formatDate(todayKey)} · Usuario: {currentUser.displayName}
+            Hoy: {formatDate(todayKey)} · Usuario: {currentUser.display_name || currentUser.username}
           </div>
         </div>
         <div className="topbar-actions">
           <span className="kpi-label">{currentUser.role === "admin" ? "Administrador" : "Tienda"}</span>
-          <button className="btn-logout" onClick={() => setCurrentUser(null)}>Salir</button>
+          <button className="btn-logout" onClick={logout}>Salir</button>
         </div>
       </div>
+
+      {globalError && (
+        <div className="error-box dismissible-alert" style={{ marginBottom: 12 }}>
+          <span>{globalError}</span>
+          <button className="alert-close" onClick={() => setGlobalError("")}>×</button>
+        </div>
+      )}
+      {loading && <div className="muted" style={{ marginBottom: 12 }}>Cargando datos del backend...</div>}
 
       <div className="stats-grid">
         <StatCard title="Ventas día seleccionado" value={money(selectedDayTotal)} hint={`${formatDate(selectedDate)} · Objetivo ${money(DAILY_TARGET)}`} />
@@ -574,7 +732,7 @@ export default function App() {
         <div className="stack">
           <div className="card">
             <h2>Registro de ventas por día</h2>
-            <p className="muted">Desglose por método de pago en mañana y tarde. Los domingos se omiten salvo horario extendido.</p>
+            <p className="muted">Datos guardados en PostgreSQL · Desglose por método de pago en mañana y tarde.</p>
 
             {currentUser.role === "admin" && (
               <div className="section-block" style={{ marginTop: 16 }}>
@@ -605,7 +763,6 @@ export default function App() {
                 Horario normal: domingos omitidos y sábados tarde deshabilitada.
               </div>
             )}
-
             {isDateClosed && (
               <div className="error-box" style={{ marginTop: 12 }}>Este día está cerrado en horario normal.</div>
             )}
@@ -614,7 +771,7 @@ export default function App() {
               <ShiftPanel
                 title="Mañana"
                 accent="morning"
-                shift={selectedDayEntry.morning}
+                shift={selectedSale.morning}
                 disabled={isDateClosed}
                 onChange={(method, value) => updateShiftField("morning", method, value)}
               />
@@ -627,7 +784,7 @@ export default function App() {
                 <ShiftPanel
                   title="Tarde"
                   accent="afternoon"
-                  shift={selectedDayEntry.afternoon}
+                  shift={selectedSale.afternoon}
                   disabled={isDateClosed}
                   onChange={(method, value) => updateShiftField("afternoon", method, value)}
                 />
@@ -640,6 +797,13 @@ export default function App() {
               <strong style={{ marginLeft: "auto" }}>Total día:</strong>
               <span style={{ fontSize: 22, color: "#67e8f9", fontWeight: 700 }}>{money(selectedDayTotal)}</span>
             </div>
+
+            <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 16, flexWrap: "wrap" }}>
+              <button type="button" onClick={saveDay} disabled={savingDay || isDateClosed}>
+                {savingDay ? "Guardando..." : "Guardar día"}
+              </button>
+              {dayMessage && <span className={dayMessage.startsWith("Error") ? "error-box" : "muted"} style={{ padding: "6px 10px" }}>{dayMessage}</span>}
+            </div>
           </div>
 
           <div className="card">
@@ -648,15 +812,108 @@ export default function App() {
             <div className="progress" style={{ marginTop: 10 }}>
               <div className="progress-bar" style={{ width: `${dailyProgress}%` }} />
             </div>
-            <div style={{ marginTop: 10 }}>
-              {selectedDayTotal >= DAILY_TARGET ? (
-                <span className="success-box" style={{ display: "inline-block", padding: "4px 12px" }}>Objetivo diario alcanzado</span>
-              ) : (
-                <span className="muted">Faltan {money(Math.max(DAILY_TARGET - selectedDayTotal, 0))}</span>
-              )}
+          </div>
+
+          <div className="card">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <h2>Gastos del día</h2>
+                <p className="muted">{formatDate(selectedDate)}</p>
+              </div>
+              <button type="button" onClick={openNewDailyExpense}>+ Añadir gasto</button>
             </div>
-            <div className="muted" style={{ marginTop: 8, textTransform: "capitalize" }}>
-              Día: {getWeekdayName(selectedDate)} · Mes: {getMonthLabel(getMonthKey(selectedDate))}
+            <table className="basic-table" style={{ marginTop: 12 }}>
+              <thead>
+                <tr>
+                  <th>Concepto</th>
+                  <th style={{ textAlign: "right" }}>Importe</th>
+                  <th style={{ textAlign: "center" }}>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dailyExpensesForDay.length ? dailyExpensesForDay.map((e) => (
+                  <tr key={e.id}>
+                    <td><strong>{e.concept}</strong></td>
+                    <td style={{ textAlign: "right", fontWeight: 700 }}>{money(e.amount)}</td>
+                    <td>
+                      <div style={{ display: "flex", justifyContent: "center", gap: 6 }}>
+                        <button type="button" className="secondary btn-sm" onClick={() => openEditDailyExpense(e)}>Editar</button>
+                        <button type="button" className="btn-sm" style={{ background: "#dc2626", color: "#fff" }} onClick={() => deleteDailyExpense(e.id)}>Borrar</button>
+                      </div>
+                    </td>
+                  </tr>
+                )) : (
+                  <tr><td colSpan={3} className="muted" style={{ textAlign: "center", padding: 16 }}>
+                    Sin gastos para este día.
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+            <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end", gap: 12 }}>
+              <strong>Total gastos día:</strong>
+              <span style={{ fontWeight: 700 }}>
+                {money(dailyExpensesForDay.reduce((s, e) => s + num(e.amount), 0))}
+              </span>
+            </div>
+          </div>
+
+          <div className="card">
+            <h2>Histórico</h2>
+            <p className="muted">Todos los días registrados (ordenados de más reciente a más antiguo).</p>
+            <div style={{ maxHeight: 420, overflowY: "auto", marginTop: 8 }}>
+              <table className="sales-table">
+                <thead>
+                  <tr>
+                    <th rowSpan={2} className="date-col">Fecha</th>
+                    <th rowSpan={2}>Día</th>
+                    <th colSpan={5} className="morning-col">Mañana</th>
+                    <th colSpan={5} className="afternoon-col">Tarde</th>
+                    <th rowSpan={2} className="total-col">Total</th>
+                    <th rowSpan={2} className="expense-col">Gastos</th>
+                    <th rowSpan={2} className="balance-col">Balance</th>
+                  </tr>
+                  <tr>
+                    <th className="morning-col">Efec.</th>
+                    <th className="morning-col">Tarj.</th>
+                    <th className="morning-col">Bizum</th>
+                    <th className="morning-col">Bonos</th>
+                    <th className="morning-col">Subt.</th>
+                    <th className="afternoon-col">Efec.</th>
+                    <th className="afternoon-col">Tarj.</th>
+                    <th className="afternoon-col">Bizum</th>
+                    <th className="afternoon-col">Bonos</th>
+                    <th className="afternoon-col">Subt.</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {historyDesc.length ? historyDesc.map((s) => {
+                    const balanceClass = num(s.daily_balance) >= 0 ? "balance-positive" : "balance-negative";
+                    return (
+                      <tr key={s.sale_date} onClick={() => setSelectedDate(s.sale_date)} style={{ cursor: "pointer" }}>
+                        <td className="date-col">{formatDate(s.sale_date)}</td>
+                        <td style={{ textTransform: "capitalize" }}>{getWeekdayName(s.sale_date)}</td>
+                        <td className="morning-col">{money(s.morning_cash)}</td>
+                        <td className="morning-col">{money(s.morning_card)}</td>
+                        <td className="morning-col">{money(s.morning_bizum)}</td>
+                        <td className="morning-col">{money(s.morning_bonos)}</td>
+                        <td className="morning-col"><strong>{money(s.morning_total)}</strong></td>
+                        <td className="afternoon-col">{money(s.afternoon_cash)}</td>
+                        <td className="afternoon-col">{money(s.afternoon_card)}</td>
+                        <td className="afternoon-col">{money(s.afternoon_bizum)}</td>
+                        <td className="afternoon-col">{money(s.afternoon_bonos)}</td>
+                        <td className="afternoon-col"><strong>{money(s.afternoon_total)}</strong></td>
+                        <td className="total-col">{money(s.total_sales)}</td>
+                        <td className="expense-col">{money(s.daily_expenses_total)}</td>
+                        <td className={`balance-col ${balanceClass}`}>{money(s.daily_balance)}</td>
+                      </tr>
+                    );
+                  }) : (
+                    <tr><td colSpan={15} className="muted" style={{ textAlign: "center", padding: 16 }}>
+                      {loading ? "Cargando..." : "No hay datos en el backend."}
+                    </td></tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -680,10 +937,10 @@ export default function App() {
           </div>
 
           <div className="card">
-            <h2>Desglose por método de pago — {getMonthLabel(selectedMonth)}</h2>
+            <h2>Desglose por método de pago</h2>
             <div className="stats-grid" style={{ marginTop: 12 }}>
               {PAYMENT_METHODS.map((m) => {
-                const v = viewedMonthMethods[m.key] || 0;
+                const v = viewedMonthMethodTotals[m.key] || 0;
                 const pct = viewedMonthSales > 0 ? Math.round((v / viewedMonthSales) * 100) : 0;
                 return <StatCard key={m.key} title={m.label} value={money(v)} hint={`${pct}% del total`} />;
               })}
@@ -693,34 +950,32 @@ export default function App() {
           <div className="monthly-layout">
             <div className="card">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <h2>Gastos del mes</h2>
-                <button type="button" onClick={openNewExpenseModal}>+ Gastos</button>
+                <h2>Gastos mensuales (por categoría)</h2>
+                <button type="button" onClick={() => openMonthlyExpense(null)}>+ Gastos</button>
               </div>
               <table className="basic-table">
                 <thead>
                   <tr>
                     <th>Categoría</th>
-                    <th>Detalle</th>
                     <th style={{ textAlign: "right" }}>Importe</th>
                     <th style={{ textAlign: "center" }}>Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {viewedMonthExpenseRecords.length ? viewedMonthExpenseRecords.map((expense) => (
-                    <tr key={expense.id}>
-                      <td><strong>{expense.category}</strong></td>
-                      <td className="muted">{expense.description || "—"}</td>
-                      <td style={{ textAlign: "right", fontWeight: 700 }}>{money(expense.amount)}</td>
+                  {viewedMonthExpenses.length ? viewedMonthExpenses.map((e) => (
+                    <tr key={`${e.month_key}-${e.category}`}>
+                      <td><strong>{e.category}</strong></td>
+                      <td style={{ textAlign: "right", fontWeight: 700 }}>{money(e.amount)}</td>
                       <td>
                         <div style={{ display: "flex", justifyContent: "center", gap: 6 }}>
-                          <button type="button" className="secondary btn-sm" onClick={() => openEditExpenseModal(expense)}>Editar</button>
-                          <button type="button" className="btn-sm" style={{ background: "#dc2626", color: "#fff" }} onClick={() => deleteExpense(expense.id)}>Borrar</button>
+                          <button type="button" className="secondary btn-sm" onClick={() => openMonthlyExpense(e)}>Editar</button>
+                          <button type="button" className="btn-sm" style={{ background: "#dc2626", color: "#fff" }} onClick={() => deleteMonthlyExpense(e)}>Borrar</button>
                         </div>
                       </td>
                     </tr>
                   )) : (
-                    <tr><td colSpan={4} style={{ textAlign: "center", padding: 24 }} className="muted">
-                      Aún no hay gastos. Pulsa "+ Gastos" para añadir el primero.
+                    <tr><td colSpan={3} style={{ textAlign: "center", padding: 24 }} className="muted">
+                      Aún no hay gastos mensuales. Pulsa "+ Gastos".
                     </td></tr>
                   )}
                 </tbody>
@@ -751,13 +1006,6 @@ export default function App() {
                 <p className="muted">Meta {money(MONTHLY_TARGET)} · {Math.round((viewedMonthSales / MONTHLY_TARGET) * 100) || 0}%</p>
                 <div className="progress" style={{ marginTop: 10 }}>
                   <div className="progress-bar green" style={{ width: `${monthlyProgress}%` }} />
-                </div>
-                <div style={{ marginTop: 10 }}>
-                  {viewedMonthSales >= MONTHLY_TARGET ? (
-                    <span className="success-box" style={{ display: "inline-block", padding: "4px 12px" }}>Objetivo alcanzado</span>
-                  ) : (
-                    <span className="muted">Faltan {money(Math.max(MONTHLY_TARGET - viewedMonthSales, 0))}</span>
-                  )}
                 </div>
               </div>
             </div>
@@ -826,59 +1074,68 @@ export default function App() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
 
-          <div className="card">
-            <h2>Histórico diario</h2>
-            <p className="muted">Objetivo {money(DAILY_TARGET)}</p>
-            <div style={{ maxHeight: 360, overflowY: "auto", marginTop: 8 }}>
-              <table className="basic-table">
-                <thead>
-                  <tr>
-                    <th>Fecha</th>
-                    <th>Día</th>
-                    <th style={{ textAlign: "right" }}>Mañana</th>
-                    <th style={{ textAlign: "right" }}>Tarde</th>
-                    <th style={{ textAlign: "right" }}>Total</th>
-                    <th>Objetivo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stats.dailyData.length ? stats.dailyData.map((row) => (
-                    <tr key={row.date}>
-                      <td>{row.fecha}</td>
-                      <td style={{ textTransform: "capitalize" }}>{row.weekday}</td>
-                      <td style={{ textAlign: "right" }}>{money(row.morning)}</td>
-                      <td style={{ textAlign: "right" }}>{money(row.afternoon)}</td>
-                      <td style={{ textAlign: "right", fontWeight: 700 }}>{money(row.total)}</td>
-                      <td>{row.cumpleObjetivo ? "✓" : "—"}</td>
-                    </tr>
-                  )) : (
-                    <tr><td colSpan={6} className="muted" style={{ textAlign: "center", padding: 16 }}>Sin datos.</td></tr>
-                  )}
-                </tbody>
-              </table>
+      {/* Modal: gasto diario */}
+      {dailyExpenseModal && (
+        <div className="modal-backdrop" onClick={closeDailyExpense}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2>{dailyExpenseModal.id ? "Editar gasto del día" : "Añadir gasto del día"}</h2>
+                <p className="muted">{formatDate(selectedDate)}</p>
+              </div>
+              <button type="button" className="secondary btn-sm" onClick={closeDailyExpense}>✕</button>
+            </div>
+            <div className="modal-body">
+              <label>
+                Concepto
+                <input
+                  value={dailyExpenseModal.concept}
+                  onChange={(e) => setDailyExpenseModal((p) => ({ ...p, concept: e.target.value }))}
+                  placeholder="Ej. Compra material, factura..."
+                  autoFocus
+                />
+              </label>
+              <label>
+                Importe
+                <input
+                  value={dailyExpenseModal.amount}
+                  onChange={(e) => setDailyExpenseModal((p) => ({ ...p, amount: e.target.value.replace(/[^0-9.,]/g, "") }))}
+                  placeholder="0.00"
+                  inputMode="decimal"
+                />
+              </label>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
+                <button type="button" className="secondary" onClick={closeDailyExpense}>Cancelar</button>
+                <button type="button" onClick={submitDailyExpense}>
+                  {dailyExpenseModal.id ? "Guardar cambios" : "Añadir gasto"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {isExpenseModalOpen && (
-        <div className="modal-backdrop" onClick={closeExpenseModal}>
+      {/* Modal: gasto mensual */}
+      {monthlyExpenseModal && (
+        <div className="modal-backdrop" onClick={closeMonthlyExpense}>
           <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <div>
-                <h2>{editingExpenseId ? "Editar gasto" : "Añadir nuevo gasto"}</h2>
+                <h2>Gasto mensual</h2>
                 <p className="muted" style={{ textTransform: "capitalize" }}>{getMonthLabel(selectedMonth)}</p>
               </div>
-              <button type="button" className="secondary btn-sm" onClick={closeExpenseModal}>✕</button>
+              <button type="button" className="secondary btn-sm" onClick={closeMonthlyExpense}>✕</button>
             </div>
             <div className="modal-body">
               <div className="form-2col">
                 <label>
                   Categoría
                   <select
-                    value={expenseForm.category}
-                    onChange={(e) => setExpenseForm((p) => ({ ...p, category: e.target.value }))}
+                    value={monthlyExpenseModal.category}
+                    onChange={(e) => setMonthlyExpenseModal((p) => ({ ...p, category: e.target.value }))}
                   >
                     {expenseCategories.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
@@ -886,25 +1143,16 @@ export default function App() {
                 <label>
                   Importe
                   <input
-                    value={expenseForm.amount}
-                    onChange={(e) => setExpenseForm((p) => ({ ...p, amount: e.target.value.replace(/[^0-9.,]/g, "") }))}
+                    value={monthlyExpenseModal.amount}
+                    onChange={(e) => setMonthlyExpenseModal((p) => ({ ...p, amount: e.target.value.replace(/[^0-9.,]/g, "") }))}
                     placeholder="0.00"
+                    inputMode="decimal"
                   />
                 </label>
               </div>
-              <label>
-                Detalle / proveedor
-                <input
-                  value={expenseForm.description}
-                  onChange={(e) => setExpenseForm((p) => ({ ...p, description: e.target.value }))}
-                  placeholder="Ej. Pago proveedor calzado, factura, alquiler..."
-                />
-              </label>
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
-                <button type="button" className="secondary" onClick={closeExpenseModal}>Cancelar</button>
-                <button type="button" onClick={saveExpense}>
-                  {editingExpenseId ? "Guardar cambios" : "Añadir gasto"}
-                </button>
+                <button type="button" className="secondary" onClick={closeMonthlyExpense}>Cancelar</button>
+                <button type="button" onClick={submitMonthlyExpense}>Guardar</button>
               </div>
             </div>
           </div>

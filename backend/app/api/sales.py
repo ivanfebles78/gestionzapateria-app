@@ -22,6 +22,7 @@ from app.schemas.sales import (
     CustomerTrafficSlot,
     DailyExpenseCreate,
     DailyExpenseRead,
+    DailyExpenseUpdate,
     DailySaleRead,
     DailySaleUpsert,
     DashboardStats,
@@ -272,6 +273,74 @@ def create_daily_expense(payload: DailyExpenseCreate, db: Session = Depends(get_
     db.commit()
     db.refresh(expense)
     return expense
+
+
+@router.put('/daily-expenses/{expense_id}', response_model=DailyExpenseRead)
+def update_daily_expense(
+    expense_id: int,
+    payload: DailyExpenseUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    expense = db.query(DailyExpense).filter(DailyExpense.id == expense_id).first()
+    if not expense:
+        raise HTTPException(status_code=404, detail='Daily expense not found')
+
+    expense.concept = payload.concept.strip()
+    expense.amount = payload.amount
+
+    sale = db.query(DailySale).filter(DailySale.sale_date == expense.sale_date).first()
+    if sale:
+        refresh_daily_totals(db, sale)
+        create_sale_log(db, sale=sale, user=user, action='update')
+
+    create_admin_notification(
+        db,
+        title='Gasto diario editado',
+        message=f'{user.display_name} editó un gasto del día {expense.sale_date.isoformat()} ({payload.concept}, {payload.amount:.2f} €).',
+        user=user,
+        sale_date=expense.sale_date,
+        notification_type='daily_expense_edited',
+    )
+
+    db.commit()
+    db.refresh(expense)
+    return expense
+
+
+@router.delete('/daily-expenses/{expense_id}', status_code=204)
+def delete_daily_expense(
+    expense_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    expense = db.query(DailyExpense).filter(DailyExpense.id == expense_id).first()
+    if not expense:
+        raise HTTPException(status_code=404, detail='Daily expense not found')
+
+    sale_date = expense.sale_date
+    concept = expense.concept
+    amount_value = expense.amount
+
+    db.delete(expense)
+    db.flush()
+
+    sale = db.query(DailySale).filter(DailySale.sale_date == sale_date).first()
+    if sale:
+        refresh_daily_totals(db, sale)
+        create_sale_log(db, sale=sale, user=user, action='update')
+
+    create_admin_notification(
+        db,
+        title='Gasto diario borrado',
+        message=f'{user.display_name} borró un gasto del día {sale_date.isoformat()} ({concept}, {amount_value:.2f} €).',
+        user=user,
+        sale_date=sale_date,
+        notification_type='daily_expense_deleted',
+    )
+
+    db.commit()
+    return None
 
 
 @router.get('/monthly-expenses', response_model=list[MonthlyExpenseRead])
