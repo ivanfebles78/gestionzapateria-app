@@ -211,6 +211,7 @@ function getAllMonthKeys(state) {
 }
 
 function getStats(state) {
+  const extendedSchedule = !!state.settings?.extendedSchedule;
   const salesEntries = Object.entries(state.salesByDay || {}).sort(([a], [b]) => a.localeCompare(b));
   const monthlySales = getMonthlySalesMap(state.salesByDay || {});
   const monthKeys = getAllMonthKeys(state);
@@ -237,7 +238,7 @@ function getStats(state) {
 
   const dailyData = salesEntries.map(([date, values]) => {
     const morning = amount(values.morning);
-    const afternoon = amount(values.afternoon);
+    const afternoon = !extendedSchedule && isSaturday(date) ? 0 : amount(values.afternoon);
     const total = morning + afternoon;
     const weekday = getWeekdayName(date);
     weekdayTotals[weekday] = (weekdayTotals[weekday] || 0) + total;
@@ -405,10 +406,11 @@ export default function App() {
 
   const selectedMonthKey = getMonthKey(selectedDate);
   const selectedDaySales = appState.salesByDay?.[selectedDate] || { morning: "", afternoon: "" };
-  const selectedDayTotal = amount(selectedDaySales.morning) + amount(selectedDaySales.afternoon);
-  const isSelectedDateSunday = isSunday(selectedDate);
   const isSelectedDateSaturday = isSaturday(selectedDate);
+  const isSelectedDateSunday = isSunday(selectedDate);
   const isAfternoonDisabled = !extendedSchedule && isSelectedDateSaturday;
+  const selectedDayAfternoon = isAfternoonDisabled ? 0 : amount(selectedDaySales.afternoon);
+  const selectedDayTotal = amount(selectedDaySales.morning) + selectedDayAfternoon;
   const isDateClosed = !extendedSchedule && isSelectedDateSunday;
 
   const viewedMonthExpenses = appState.expensesByMonth?.[selectedMonth] || [];
@@ -536,6 +538,7 @@ export default function App() {
   };
 
   const handleDateInputChange = (value) => {
+    if (!extendedSchedule && isSunday(value)) return;
     setSelectedDate(normalizeDateForSchedule(value, extendedSchedule));
   };
 
@@ -634,7 +637,7 @@ export default function App() {
                     </div>
                   ) : null}
 
-                  <div className="grid gap-5 md:grid-cols-3">
+                  <div className={`grid gap-5 ${isAfternoonDisabled ? "md:grid-cols-2" : "md:grid-cols-3"}`}>
                     <div className="space-y-2">
                       <Label className="text-slate-200">Ventas mañana</Label>
                       <Input
@@ -645,16 +648,18 @@ export default function App() {
                         className="h-12 rounded-xl border-white/10 bg-slate-950/40 text-white disabled:cursor-not-allowed disabled:opacity-50"
                       />
                     </div>
-                    <div className="space-y-2">
-                      <Label className="text-slate-200">Ventas tarde</Label>
-                      <Input
-                        value={isAfternoonDisabled ? "" : selectedDaySales.afternoon}
-                        onChange={(e) => updateSelectedDateSales("afternoon", e.target.value)}
-                        placeholder={isAfternoonDisabled ? "No disponible" : "0.00"}
-                        disabled={isDateClosed || isAfternoonDisabled}
-                        className="h-12 rounded-xl border-white/10 bg-slate-950/40 text-white disabled:cursor-not-allowed disabled:opacity-50"
-                      />
-                    </div>
+                    {!isAfternoonDisabled ? (
+                      <div className="space-y-2">
+                        <Label className="text-slate-200">Ventas tarde</Label>
+                        <Input
+                          value={selectedDaySales.afternoon}
+                          onChange={(e) => updateSelectedDateSales("afternoon", e.target.value)}
+                          placeholder="0.00"
+                          disabled={isDateClosed}
+                          className="h-12 rounded-xl border-white/10 bg-slate-950/40 text-white disabled:cursor-not-allowed disabled:opacity-50"
+                        />
+                      </div>
+                    ) : null}
                     <div className="space-y-2">
                       <Label className="text-slate-200">Total ventas</Label>
                       <Input value={money(selectedDayTotal)} readOnly className="h-12 rounded-xl border-cyan-500/20 bg-cyan-500/10 text-cyan-100" />
