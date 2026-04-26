@@ -22,25 +22,28 @@ const expenseCategories = [
   "Otros",
 ];
 
+const PAYMENT_METHODS = [
+  { key: "cash", label: "Efectivo" },
+  { key: "card", label: "Tarjeta" },
+  { key: "bizum", label: "Bizum" },
+  { key: "transfer", label: "Transferencia" },
+];
+
+const EMPTY_SHIFT = { cash: "", card: "", bizum: "", transfer: "" };
+
 function formatDate(date) {
   return new Date(`${date}T12:00:00`).toLocaleDateString("es-ES");
 }
 
 function getTodayKey() {
   const d = new Date();
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function addDays(dateStr, days) {
   const d = new Date(`${dateStr}T12:00:00`);
   d.setDate(d.getDate() + days);
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function getWeekdayIndex(dateStr) {
@@ -80,44 +83,11 @@ function getMonthLabel(monthKey) {
 function addMonths(monthKey, delta) {
   const [year, month] = monthKey.split("-").map(Number);
   const d = new Date(year, month - 1 + delta, 1);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  return `${y}-${m}`;
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function getWeekdayName(dateStr) {
   return new Date(`${dateStr}T12:00:00`).toLocaleDateString("es-ES", { weekday: "long" });
-}
-
-function createDefaultState() {
-  const today = getTodayKey();
-  return {
-    salesByDay: { [today]: { morning: "", afternoon: "" } },
-    expensesByMonth: {},
-    settings: { extendedSchedule: false },
-  };
-}
-
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return createDefaultState();
-    const parsed = JSON.parse(raw);
-    return {
-      ...createDefaultState(),
-      ...parsed,
-      settings: {
-        ...createDefaultState().settings,
-        ...(parsed.settings || {}),
-      },
-    };
-  } catch {
-    return createDefaultState();
-  }
-}
-
-function saveState(state) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
 function amount(value) {
@@ -133,12 +103,100 @@ function money(n) {
   }).format(Number(n || 0));
 }
 
+// ── Migración de turnos ─────────────────────────────────────
+// Antes: morning/afternoon eran strings ("300"). Ahora son objetos
+// con desglose por método de pago. Conservamos el dato vertiendo el
+// total antiguo en "Efectivo" por defecto.
+function migrateShift(value) {
+  if (value == null) return { ...EMPTY_SHIFT };
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return {
+      cash: value.cash ?? "",
+      card: value.card ?? "",
+      bizum: value.bizum ?? "",
+      transfer: value.transfer ?? "",
+    };
+  }
+  const legacy = String(value);
+  return { cash: legacy, card: "", bizum: "", transfer: "" };
+}
+
+function migrateSalesByDay(raw) {
+  if (!raw || typeof raw !== "object") return {};
+  const result = {};
+  for (const [date, entry] of Object.entries(raw)) {
+    result[date] = {
+      morning: migrateShift(entry?.morning),
+      afternoon: migrateShift(entry?.afternoon),
+    };
+  }
+  return result;
+}
+
+function shiftTotal(shift) {
+  if (!shift) return 0;
+  return amount(shift.cash) + amount(shift.card) + amount(shift.bizum) + amount(shift.transfer);
+}
+
+function dayTotal(entry, opts = {}) {
+  if (!entry) return 0;
+  const morning = shiftTotal(entry.morning);
+  const afternoon = opts.skipAfternoon ? 0 : shiftTotal(entry.afternoon);
+  return morning + afternoon;
+}
+
+function createDefaultState() {
+  const today = getTodayKey();
+  return {
+    salesByDay: {
+      [today]: { morning: { ...EMPTY_SHIFT }, afternoon: { ...EMPTY_SHIFT } },
+    },
+    expensesByMonth: {},
+    settings: { extendedSchedule: false },
+  };
+}
+
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return createDefaultState();
+    const parsed = JSON.parse(raw);
+    return {
+      ...createDefaultState(),
+      ...parsed,
+      salesByDay: migrateSalesByDay(parsed.salesByDay),
+      settings: {
+        ...createDefaultState().settings,
+        ...(parsed.settings || {}),
+      },
+    };
+  } catch {
+    return createDefaultState();
+  }
+}
+
+function saveState(state) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
 function getMonthlySalesMap(salesByDay) {
   const result = {};
-  for (const [date, values] of Object.entries(salesByDay)) {
+  for (const [date, entry] of Object.entries(salesByDay || {})) {
     const monthKey = getMonthKey(date);
-    const total = amount(values.morning) + amount(values.afternoon);
-    result[monthKey] = (result[monthKey] || 0) + total;
+    result[monthKey] = (result[monthKey] || 0) + dayTotal(entry);
+  }
+  return result;
+}
+
+function getMonthlyMethodMap(salesByDay) {
+  // Devuelve por mes el desglose por método de pago.
+  const result = {};
+  for (const [date, entry] of Object.entries(salesByDay || {})) {
+    const monthKey = getMonthKey(date);
+    if (!result[monthKey]) result[monthKey] = { cash: 0, card: 0, bizum: 0, transfer: 0 };
+    for (const m of PAYMENT_METHODS) {
+      result[monthKey][m.key] += amount(entry?.morning?.[m.key]) + amount(entry?.afternoon?.[m.key]);
+    }
   }
   return result;
 }
@@ -196,16 +254,23 @@ function getStats(state) {
   let morningWins = 0;
   let afternoonWins = 0;
   const weekdayTotals = {};
+  const methodTotals = { cash: 0, card: 0, bizum: 0, transfer: 0 };
 
-  const dailyData = salesEntries.map(([date, values]) => {
-    const morning = amount(values.morning);
-    const afternoon = !extendedSchedule && isSaturday(date) ? 0 : amount(values.afternoon);
+  const dailyData = salesEntries.map(([date, entry]) => {
+    const morning = shiftTotal(entry?.morning);
+    const afternoon = !extendedSchedule && isSaturday(date) ? 0 : shiftTotal(entry?.afternoon);
     const total = morning + afternoon;
     const weekday = getWeekdayName(date);
     weekdayTotals[weekday] = (weekdayTotals[weekday] || 0) + total;
     if (total >= DAILY_TARGET) daysMeetingTarget += 1;
     if (morning > afternoon) morningWins += 1;
     if (afternoon > morning) afternoonWins += 1;
+    for (const m of PAYMENT_METHODS) {
+      methodTotals[m.key] += amount(entry?.morning?.[m.key]);
+      if (extendedSchedule || !isSaturday(date)) {
+        methodTotals[m.key] += amount(entry?.afternoon?.[m.key]);
+      }
+    }
     return {
       date,
       fecha: formatDate(date),
@@ -222,10 +287,13 @@ function getStats(state) {
   const totalDays = dailyData.length;
   const totalMonthly = monthlyData.length;
   const monthsMeetingTarget = monthlyData.filter((m) => m.cumpleObjetivo).length;
+  const grandTotal = methodTotals.cash + methodTotals.card + methodTotals.bizum + methodTotals.transfer;
 
   return {
     dailyData,
     monthlyData,
+    methodTotals,
+    grandTotal,
     overview: {
       totalDays,
       totalMonthly,
@@ -249,6 +317,32 @@ function StatCard({ title, value, hint }) {
       <div className="kpi-label">{title}</div>
       <div className="kpi-value">{value}</div>
       {hint ? <div className="muted" style={{ fontSize: 12 }}>{hint}</div> : null}
+    </div>
+  );
+}
+
+function ShiftPanel({ title, shift, disabled, accent, onChange }) {
+  const total = shiftTotal(shift);
+  return (
+    <div className={`form-block ${accent}`}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+        <h3 style={{ margin: 0 }}>{title}</h3>
+        <span style={{ fontWeight: 700, color: "#67e8f9", fontSize: 18 }}>{money(total)}</span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        {PAYMENT_METHODS.map((m) => (
+          <label key={m.key}>
+            {m.label}
+            <input
+              value={shift?.[m.key] ?? ""}
+              onChange={(e) => onChange(m.key, e.target.value)}
+              placeholder="0.00"
+              disabled={disabled}
+              inputMode="decimal"
+            />
+          </label>
+        ))}
+      </div>
     </div>
   );
 }
@@ -320,20 +414,23 @@ export default function App() {
     setSelectedDate((prev) => normalizeDateForSchedule(prev, extendedSchedule));
   }, [extendedSchedule]);
 
-  const selectedMonthKey = getMonthKey(selectedDate);
-  const selectedDaySales = appState.salesByDay?.[selectedDate] || { morning: "", afternoon: "" };
+  const selectedDayEntry = appState.salesByDay?.[selectedDate] || { morning: { ...EMPTY_SHIFT }, afternoon: { ...EMPTY_SHIFT } };
   const isSelectedDateSaturday = isSaturday(selectedDate);
   const isSelectedDateSunday = isSunday(selectedDate);
   const isAfternoonDisabled = !extendedSchedule && isSelectedDateSaturday;
-  const selectedDayAfternoon = isAfternoonDisabled ? 0 : amount(selectedDaySales.afternoon);
-  const selectedDayTotal = amount(selectedDaySales.morning) + selectedDayAfternoon;
   const isDateClosed = !extendedSchedule && isSelectedDateSunday;
+
+  const morningTotal = shiftTotal(selectedDayEntry.morning);
+  const afternoonTotal = isAfternoonDisabled ? 0 : shiftTotal(selectedDayEntry.afternoon);
+  const selectedDayTotal = morningTotal + afternoonTotal;
 
   const viewedMonthExpenses = appState.expensesByMonth?.[selectedMonth] || [];
   const viewedMonthExpenseRecords = normalizeExpenseRecords(viewedMonthExpenses);
   const viewedMonthSales = getMonthlySalesMap(appState.salesByDay || {})[selectedMonth] || 0;
   const viewedMonthExpensesTotal = getMonthlyExpensesTotal(viewedMonthExpenses);
   const viewedMonthBalance = viewedMonthSales - viewedMonthExpensesTotal;
+  const viewedMonthMethods = getMonthlyMethodMap(appState.salesByDay || {})[selectedMonth]
+    || { cash: 0, card: 0, bizum: 0, transfer: 0 };
 
   const stats = useMemo(() => getStats(appState), [appState]);
 
@@ -342,18 +439,24 @@ export default function App() {
   const currentMonthExpenses = getMonthlyExpensesTotal(appState.expensesByMonth?.[currentMonthKey] || {});
   const currentMonthBalance = currentMonthSales - currentMonthExpenses;
 
-  const updateSelectedDateSales = (field, value) => {
+  const updateShiftField = (shift, methodKey, value) => {
     const clean = value.replace(/[^0-9.,]/g, "").replace(",", ".");
-    setAppState((prev) => ({
-      ...prev,
-      salesByDay: {
-        ...prev.salesByDay,
-        [selectedDate]: {
-          ...(prev.salesByDay?.[selectedDate] || { morning: "", afternoon: "" }),
-          [field]: clean,
+    setAppState((prev) => {
+      const prevEntry = prev.salesByDay?.[selectedDate] || { morning: { ...EMPTY_SHIFT }, afternoon: { ...EMPTY_SHIFT } };
+      return {
+        ...prev,
+        salesByDay: {
+          ...prev.salesByDay,
+          [selectedDate]: {
+            ...prevEntry,
+            [shift]: {
+              ...(prevEntry[shift] || EMPTY_SHIFT),
+              [methodKey]: clean,
+            },
+          },
         },
-      },
-    }));
+      };
+    });
   };
 
   const openNewExpenseModal = () => {
@@ -420,13 +523,8 @@ export default function App() {
     }));
   };
 
-  const goToPreviousAllowedDay = () => {
-    setSelectedDate((prev) => getNextAllowedDate(prev, -1, extendedSchedule));
-  };
-
-  const goToNextAllowedDay = () => {
-    setSelectedDate((prev) => getNextAllowedDate(prev, 1, extendedSchedule));
-  };
+  const goToPreviousAllowedDay = () => setSelectedDate((p) => getNextAllowedDate(p, -1, extendedSchedule));
+  const goToNextAllowedDay = () => setSelectedDate((p) => getNextAllowedDate(p, 1, extendedSchedule));
 
   const handleDateInputChange = (value) => {
     if (!value) return;
@@ -456,26 +554,10 @@ export default function App() {
       </div>
 
       <div className="stats-grid">
-        <StatCard
-          title="Ventas día seleccionado"
-          value={money(selectedDayTotal)}
-          hint={`${formatDate(selectedDate)} · Objetivo ${money(DAILY_TARGET)}`}
-        />
-        <StatCard
-          title="Ventas mes actual"
-          value={money(currentMonthSales)}
-          hint={getMonthLabel(currentMonthKey)}
-        />
-        <StatCard
-          title="Gastos mes actual"
-          value={money(currentMonthExpenses)}
-          hint="Acumulado mensual"
-        />
-        <StatCard
-          title="Balance mes actual"
-          value={money(currentMonthBalance)}
-          hint={currentMonthBalance >= 0 ? "Resultado positivo" : "Resultado negativo"}
-        />
+        <StatCard title="Ventas día seleccionado" value={money(selectedDayTotal)} hint={`${formatDate(selectedDate)} · Objetivo ${money(DAILY_TARGET)}`} />
+        <StatCard title="Ventas mes actual" value={money(currentMonthSales)} hint={getMonthLabel(currentMonthKey)} />
+        <StatCard title="Gastos mes actual" value={money(currentMonthExpenses)} hint="Acumulado mensual" />
+        <StatCard title="Balance mes actual" value={money(currentMonthBalance)} hint={currentMonthBalance >= 0 ? "Resultado positivo" : "Resultado negativo"} />
       </div>
 
       <div className="tabs">
@@ -492,7 +574,7 @@ export default function App() {
         <div className="stack">
           <div className="card">
             <h2>Registro de ventas por día</h2>
-            <p className="muted">Puedes moverte entre días o seleccionar una fecha. Los domingos se omiten salvo horario extendido.</p>
+            <p className="muted">Desglose por método de pago en mañana y tarde. Los domingos se omiten salvo horario extendido.</p>
 
             {currentUser.role === "admin" && (
               <div className="section-block" style={{ marginTop: 16 }}>
@@ -511,12 +593,7 @@ export default function App() {
 
             <div className="date-nav" style={{ marginTop: 16 }}>
               <button type="button" className="secondary nav-btn" onClick={goToPreviousAllowedDay}>‹</button>
-              <input
-                type="date"
-                className="date-input"
-                value={selectedDate}
-                onChange={(e) => handleDateInputChange(e.target.value)}
-              />
+              <input type="date" className="date-input" value={selectedDate} onChange={(e) => handleDateInputChange(e.target.value)} />
               <button type="button" className="secondary nav-btn" onClick={goToNextAllowedDay}>›</button>
               <button type="button" className="secondary btn-sm" onClick={() => setSelectedDate(normalizeDateForSchedule(todayKey, extendedSchedule))}>Hoy</button>
               <button type="button" className="secondary btn-sm" onClick={() => setSelectedDate(normalizeDateForSchedule(addDays(todayKey, -7), extendedSchedule))}>-7d</button>
@@ -534,38 +611,33 @@ export default function App() {
             )}
 
             <div className="form-2col" style={{ marginTop: 16 }}>
-              <div className="form-block morning">
-                <label>
-                  Ventas mañana
-                  <input
-                    value={selectedDaySales.morning}
-                    onChange={(e) => updateSelectedDateSales("morning", e.target.value)}
-                    placeholder="0.00"
-                    disabled={isDateClosed}
-                  />
-                </label>
-              </div>
-              {!isAfternoonDisabled ? (
-                <div className="form-block afternoon">
-                  <label>
-                    Ventas tarde
-                    <input
-                      value={selectedDaySales.afternoon}
-                      onChange={(e) => updateSelectedDateSales("afternoon", e.target.value)}
-                      placeholder="0.00"
-                      disabled={isDateClosed}
-                    />
-                  </label>
+              <ShiftPanel
+                title="Mañana"
+                accent="morning"
+                shift={selectedDayEntry.morning}
+                disabled={isDateClosed}
+                onChange={(method, value) => updateShiftField("morning", method, value)}
+              />
+              {isAfternoonDisabled ? (
+                <div className="form-block">
+                  <h3 style={{ margin: 0 }}>Tarde</h3>
+                  <p className="muted" style={{ marginTop: 8 }}>Sábado tarde deshabilitado en horario normal.</p>
                 </div>
               ) : (
-                <div className="form-block">
-                  <span className="muted">Sábado tarde deshabilitado en horario normal.</span>
-                </div>
+                <ShiftPanel
+                  title="Tarde"
+                  accent="afternoon"
+                  shift={selectedDayEntry.afternoon}
+                  disabled={isDateClosed}
+                  onChange={(method, value) => updateShiftField("afternoon", method, value)}
+                />
               )}
             </div>
 
             <div className="totals-row" style={{ marginTop: 16 }}>
-              <strong>Total día:</strong>
+              <strong>Mañana:</strong><span>{money(morningTotal)}</span>
+              <strong>Tarde:</strong><span>{money(afternoonTotal)}</span>
+              <strong style={{ marginLeft: "auto" }}>Total día:</strong>
               <span style={{ fontSize: 22, color: "#67e8f9", fontWeight: 700 }}>{money(selectedDayTotal)}</span>
             </div>
           </div>
@@ -584,7 +656,7 @@ export default function App() {
               )}
             </div>
             <div className="muted" style={{ marginTop: 8, textTransform: "capitalize" }}>
-              Día: {getWeekdayName(selectedDate)} · Mes: {getMonthLabel(selectedMonthKey)}
+              Día: {getWeekdayName(selectedDate)} · Mes: {getMonthLabel(getMonthKey(selectedDate))}
             </div>
           </div>
         </div>
@@ -600,15 +672,21 @@ export default function App() {
               </div>
               <div className="date-nav">
                 <button type="button" className="secondary nav-btn" onClick={() => setSelectedMonth((p) => addMonths(p, -1))}>‹</button>
-                <input
-                  type="month"
-                  className="date-input"
-                  value={selectedMonth}
-                  onChange={(e) => setSelectedMonth(e.target.value)}
-                />
+                <input type="month" className="date-input" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} />
                 <button type="button" className="secondary nav-btn" onClick={() => setSelectedMonth((p) => addMonths(p, 1))}>›</button>
                 <button type="button" className="secondary btn-sm" onClick={() => setSelectedMonth(currentMonthKey)}>Mes actual</button>
               </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <h2>Desglose por método de pago — {getMonthLabel(selectedMonth)}</h2>
+            <div className="stats-grid" style={{ marginTop: 12 }}>
+              {PAYMENT_METHODS.map((m) => {
+                const v = viewedMonthMethods[m.key] || 0;
+                const pct = viewedMonthSales > 0 ? Math.round((v / viewedMonthSales) * 100) : 0;
+                return <StatCard key={m.key} title={m.label} value={money(v)} hint={`${pct}% del total`} />;
+              })}
             </div>
           </div>
 
@@ -694,6 +772,17 @@ export default function App() {
             <StatCard title="% meses con objetivo" value={`${stats.overview.monthlyTargetRate}%`} hint={`${stats.overview.monthsMeetingTarget} meses`} />
             <StatCard title="Día más fuerte" value={stats.overview.bestWeekday} hint={money(stats.overview.bestWeekdayAmount)} />
             <StatCard title="Día más débil" value={stats.overview.worstWeekday} hint={money(stats.overview.worstWeekdayAmount)} />
+          </div>
+
+          <div className="card">
+            <h2>Total histórico por método de pago</h2>
+            <div className="stats-grid" style={{ marginTop: 12 }}>
+              {PAYMENT_METHODS.map((m) => {
+                const v = stats.methodTotals[m.key] || 0;
+                const pct = stats.grandTotal > 0 ? Math.round((v / stats.grandTotal) * 100) : 0;
+                return <StatCard key={m.key} title={m.label} value={money(v)} hint={`${pct}% del total`} />;
+              })}
+            </div>
           </div>
 
           <div className="card">
