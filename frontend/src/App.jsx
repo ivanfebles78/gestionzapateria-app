@@ -67,7 +67,8 @@ function getNextAllowedDate(dateStr, direction, extendedSchedule) {
 
 function normalizeDateForSchedule(dateStr, extendedSchedule) {
   if (isWorkingDay(dateStr, extendedSchedule)) return dateStr;
-  return getNextAllowedDate(dateStr, -1, extendedSchedule);
+  // Si caemos en domingo (horario normal), saltar HACIA ADELANTE → Lunes.
+  return getNextAllowedDate(dateStr, 1, extendedSchedule);
 }
 
 function getMonthKey(dateStr) { return dateStr.slice(0, 7); }
@@ -203,6 +204,12 @@ function ShiftPanel({ title, accent, shift, disabled, onChange }) {
   );
 }
 
+const LOGIN_OPTIONS = [
+  { username: "Ivan", label: "Iván" },
+  { username: "Claudia", label: "Claudia" },
+  { username: "Tienda", label: "Tienda" },
+];
+
 function LoginScreen({ onLoggedIn }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -234,18 +241,23 @@ function LoginScreen({ onLoggedIn }) {
         <div>
           <div className="eyebrow">Zapatería · Control</div>
           <h1 style={{ marginTop: 8 }}>Acceso a la aplicación</h1>
-          <p className="muted" style={{ marginTop: 6 }}>Introduce tu usuario y contraseña.</p>
+          <p className="muted" style={{ marginTop: 6 }}>Selecciona el usuario e introduce la contraseña.</p>
         </div>
         <label>
           Usuario
-          <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Iván / Claudia / Tienda" autoFocus />
+          <select value={username} onChange={(e) => setUsername(e.target.value)} autoFocus>
+            <option value="">Selecciona un usuario</option>
+            {LOGIN_OPTIONS.map((u) => (
+              <option key={u.username} value={u.username}>{u.label}</option>
+            ))}
+          </select>
         </label>
         <label>
           Contraseña
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Contraseña" />
         </label>
         {error ? <div className="error-box">{error}</div> : null}
-        <button type="submit" disabled={busy}>{busy ? "Entrando..." : "Entrar"}</button>
+        <button type="submit" disabled={busy || !username}>{busy ? "Entrando..." : "Entrar"}</button>
       </form>
     </div>
   );
@@ -277,8 +289,10 @@ export default function App() {
   // Mes seleccionado para tab mensual
   const [selectedMonth, setSelectedMonth] = useState(getMonthKey(getTodayKey()));
 
-  // Modal de gasto diario
-  const [dailyExpenseModal, setDailyExpenseModal] = useState(null); // null | { id?, concept, amount }
+  // Modal de gastos diarios — abre el panel de gestión completo (lista + form)
+  const [dailyExpensesModalOpen, setDailyExpensesModalOpen] = useState(false);
+  const [dailyExpenseDraft, setDailyExpenseDraft] = useState({ id: null, concept: "", amount: "" });
+  const [dailyExpenseError, setDailyExpenseError] = useState("");
 
   // Modal de gasto mensual
   const [monthlyExpenseModal, setMonthlyExpenseModal] = useState(null); // null | { category, amount }
@@ -550,26 +564,54 @@ export default function App() {
   const goToNextAllowedDay = () => setSelectedDate((p) => getNextAllowedDate(p, 1, extendedSchedule));
   const handleDateInputChange = (value) => {
     if (!value) return;
-    if (!extendedSchedule && isSunday(value)) return;
+    // Si elige un domingo en horario normal, saltamos al lunes (no rechazamos).
     setSelectedDate(normalizeDateForSchedule(value, extendedSchedule));
   };
 
-  // ─── Gastos diarios (CRUD) ───
-  const openNewDailyExpense = () => setDailyExpenseModal({ concept: "", amount: "" });
-  const openEditDailyExpense = (e) => setDailyExpenseModal({ id: e.id, concept: e.concept, amount: String(e.amount) });
-  const closeDailyExpense = () => setDailyExpenseModal(null);
+  // ─── Gastos diarios (CRUD desde un único modal) ───
+  const openDailyExpensesModal = () => {
+    setDailyExpenseDraft({ id: null, concept: "", amount: "" });
+    setDailyExpenseError("");
+    setDailyExpensesModalOpen(true);
+  };
+  const closeDailyExpensesModal = () => {
+    setDailyExpensesModalOpen(false);
+    setDailyExpenseDraft({ id: null, concept: "", amount: "" });
+    setDailyExpenseError("");
+  };
+  const startEditDailyExpense = (e) => {
+    setDailyExpenseDraft({ id: e.id, concept: e.concept, amount: String(e.amount) });
+    setDailyExpenseError("");
+  };
+  const cancelEditDailyExpense = () => {
+    setDailyExpenseDraft({ id: null, concept: "", amount: "" });
+    setDailyExpenseError("");
+  };
 
-  const submitDailyExpense = async () => {
-    if (!dailyExpenseModal) return;
-    const concept = dailyExpenseModal.concept.trim();
-    const amount = Number(String(dailyExpenseModal.amount).replace(",", "."));
+  const refreshDayFromBackend = async () => {
+    try {
+      const fresh = await apiFetch(`/api/daily-sales?date_from=${selectedDate}&date_to=${selectedDate}`);
+      if (Array.isArray(fresh) && fresh[0]) {
+        setAllSales((prev) => {
+          const idx = prev.findIndex((s) => s.sale_date === fresh[0].sale_date);
+          if (idx === -1) return [...prev, fresh[0]];
+          const copy = prev.slice(); copy[idx] = fresh[0]; return copy;
+        });
+      }
+    } catch {/* ignorar */}
+  };
+
+  const submitDailyExpenseDraft = async () => {
+    const concept = dailyExpenseDraft.concept.trim();
+    const amount = Number(String(dailyExpenseDraft.amount).replace(",", "."));
     if (!concept || !Number.isFinite(amount) || amount < 0) {
-      setDayMessage("Concepto e importe son obligatorios.");
+      setDailyExpenseError("Concepto e importe son obligatorios.");
       return;
     }
+    setDailyExpenseError("");
     try {
-      if (dailyExpenseModal.id) {
-        const updated = await apiFetch(`/api/daily-expenses/${dailyExpenseModal.id}`, {
+      if (dailyExpenseDraft.id) {
+        const updated = await apiFetch(`/api/daily-expenses/${dailyExpenseDraft.id}`, {
           method: "PUT",
           body: JSON.stringify({ concept, amount }),
         });
@@ -581,18 +623,11 @@ export default function App() {
         });
         setDailyExpensesForDay((prev) => [created, ...prev]);
       }
-      // El backend recalcula totales del día → recargo el día desde allSales
-      const fresh = await apiFetch(`/api/daily-sales?date_from=${selectedDate}&date_to=${selectedDate}`);
-      if (Array.isArray(fresh) && fresh[0]) {
-        setAllSales((prev) => {
-          const idx = prev.findIndex((s) => s.sale_date === fresh[0].sale_date);
-          if (idx === -1) return [...prev, fresh[0]];
-          const copy = prev.slice(); copy[idx] = fresh[0]; return copy;
-        });
-      }
-      closeDailyExpense();
+      await refreshDayFromBackend();
+      // Reset draft tras guardar para poder añadir otro inmediatamente
+      setDailyExpenseDraft({ id: null, concept: "", amount: "" });
     } catch (err) {
-      setDayMessage(`Error: ${err.message}`);
+      setDailyExpenseError(err.message || "Error al guardar");
     }
   };
 
@@ -601,16 +636,13 @@ export default function App() {
     try {
       await apiFetch(`/api/daily-expenses/${id}`, { method: "DELETE" });
       setDailyExpensesForDay((prev) => prev.filter((e) => e.id !== id));
-      const fresh = await apiFetch(`/api/daily-sales?date_from=${selectedDate}&date_to=${selectedDate}`);
-      if (Array.isArray(fresh) && fresh[0]) {
-        setAllSales((prev) => {
-          const idx = prev.findIndex((s) => s.sale_date === fresh[0].sale_date);
-          if (idx === -1) return [...prev, fresh[0]];
-          const copy = prev.slice(); copy[idx] = fresh[0]; return copy;
-        });
+      // Si estaba editándose el que acabamos de borrar, limpiar form
+      if (dailyExpenseDraft.id === id) {
+        setDailyExpenseDraft({ id: null, concept: "", amount: "" });
       }
+      await refreshDayFromBackend();
     } catch (err) {
-      setDayMessage(`Error al borrar: ${err.message}`);
+      setDailyExpenseError(err.message || "Error al borrar");
     }
   };
 
@@ -684,8 +716,11 @@ export default function App() {
   const dailyProgress = Math.min((selectedDayTotal / DAILY_TARGET) * 100, 100);
   const monthlyProgress = Math.min((viewedMonthSales / MONTHLY_TARGET) * 100, 100);
 
-  // Histórico ordenado para la tabla inferior
-  const historyDesc = [...allSales].sort((a, b) => b.sale_date.localeCompare(a.sale_date));
+  // Histórico ordenado para la tabla inferior. En horario normal ocultamos los
+  // domingos para no ensuciar la vista (la tienda no abre).
+  const historyDesc = [...allSales]
+    .filter((s) => extendedSchedule || !isSunday(s.sale_date))
+    .sort((a, b) => b.sale_date.localeCompare(a.sale_date));
 
   return (
     <div className="shell">
@@ -751,7 +786,7 @@ export default function App() {
 
             <div className="date-nav" style={{ marginTop: 16 }}>
               <button type="button" className="secondary nav-btn" onClick={goToPreviousAllowedDay}>‹</button>
-              <input type="date" className="date-input" value={selectedDate} onChange={(e) => handleDateInputChange(e.target.value)} />
+              <input type="date" className="date-input" value={selectedDate} onChange={(e) => handleDateInputChange(e.target.value)} style={{ flex: "0 0 auto", width: 160 }} />
               <button type="button" className="secondary nav-btn" onClick={goToNextAllowedDay}>›</button>
               <button type="button" className="secondary btn-sm" onClick={() => setSelectedDate(normalizeDateForSchedule(todayKey, extendedSchedule))}>Hoy</button>
               <button type="button" className="secondary btn-sm" onClick={() => setSelectedDate(normalizeDateForSchedule(addDays(todayKey, -7), extendedSchedule))}>-7d</button>
@@ -815,45 +850,17 @@ export default function App() {
           </div>
 
           <div className="card">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
               <div>
                 <h2>Gastos del día</h2>
-                <p className="muted">{formatDate(selectedDate)}</p>
+                <p className="muted">
+                  {formatDate(selectedDate)} ·{" "}
+                  {dailyExpensesForDay.length
+                    ? `${dailyExpensesForDay.length} gasto${dailyExpensesForDay.length === 1 ? "" : "s"} · Total ${money(dailyExpensesForDay.reduce((s, e) => s + num(e.amount), 0))}`
+                    : "Sin gastos registrados"}
+                </p>
               </div>
-              <button type="button" onClick={openNewDailyExpense}>+ Añadir gasto</button>
-            </div>
-            <table className="basic-table" style={{ marginTop: 12 }}>
-              <thead>
-                <tr>
-                  <th>Concepto</th>
-                  <th style={{ textAlign: "right" }}>Importe</th>
-                  <th style={{ textAlign: "center" }}>Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {dailyExpensesForDay.length ? dailyExpensesForDay.map((e) => (
-                  <tr key={e.id}>
-                    <td><strong>{e.concept}</strong></td>
-                    <td style={{ textAlign: "right", fontWeight: 700 }}>{money(e.amount)}</td>
-                    <td>
-                      <div style={{ display: "flex", justifyContent: "center", gap: 6 }}>
-                        <button type="button" className="secondary btn-sm" onClick={() => openEditDailyExpense(e)}>Editar</button>
-                        <button type="button" className="btn-sm" style={{ background: "#dc2626", color: "#fff" }} onClick={() => deleteDailyExpense(e.id)}>Borrar</button>
-                      </div>
-                    </td>
-                  </tr>
-                )) : (
-                  <tr><td colSpan={3} className="muted" style={{ textAlign: "center", padding: 16 }}>
-                    Sin gastos para este día.
-                  </td></tr>
-                )}
-              </tbody>
-            </table>
-            <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end", gap: 12 }}>
-              <strong>Total gastos día:</strong>
-              <span style={{ fontWeight: 700 }}>
-                {money(dailyExpensesForDay.reduce((s, e) => s + num(e.amount), 0))}
-              </span>
+              <button type="button" onClick={openDailyExpensesModal}>Gastos</button>
             </div>
           </div>
 
@@ -929,7 +936,7 @@ export default function App() {
               </div>
               <div className="date-nav">
                 <button type="button" className="secondary nav-btn" onClick={() => setSelectedMonth((p) => addMonths(p, -1))}>‹</button>
-                <input type="month" className="date-input" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} />
+                <input type="month" className="date-input" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} style={{ flex: "0 0 auto", width: 160 }} />
                 <button type="button" className="secondary nav-btn" onClick={() => setSelectedMonth((p) => addMonths(p, 1))}>›</button>
                 <button type="button" className="secondary btn-sm" onClick={() => setSelectedMonth(currentMonthKey)}>Mes actual</button>
               </div>
@@ -1077,41 +1084,93 @@ export default function App() {
         </div>
       )}
 
-      {/* Modal: gasto diario */}
-      {dailyExpenseModal && (
-        <div className="modal-backdrop" onClick={closeDailyExpense}>
+      {/* Modal: gestión de gastos del día (lista + añadir/editar/borrar) */}
+      {dailyExpensesModalOpen && (
+        <div className="modal-backdrop" onClick={closeDailyExpensesModal}>
           <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <div>
-                <h2>{dailyExpenseModal.id ? "Editar gasto del día" : "Añadir gasto del día"}</h2>
-                <p className="muted">{formatDate(selectedDate)}</p>
+                <h2>Gastos del día</h2>
+                <p className="muted" style={{ textTransform: "capitalize" }}>{formatDate(selectedDate)} · {getWeekdayName(selectedDate)}</p>
               </div>
-              <button type="button" className="secondary btn-sm" onClick={closeDailyExpense}>✕</button>
+              <button type="button" className="secondary btn-sm" onClick={closeDailyExpensesModal}>✕</button>
             </div>
             <div className="modal-body">
-              <label>
-                Concepto
-                <input
-                  value={dailyExpenseModal.concept}
-                  onChange={(e) => setDailyExpenseModal((p) => ({ ...p, concept: e.target.value }))}
-                  placeholder="Ej. Compra material, factura..."
-                  autoFocus
-                />
-              </label>
-              <label>
-                Importe
-                <input
-                  value={dailyExpenseModal.amount}
-                  onChange={(e) => setDailyExpenseModal((p) => ({ ...p, amount: e.target.value.replace(/[^0-9.,]/g, "") }))}
-                  placeholder="0.00"
-                  inputMode="decimal"
-                />
-              </label>
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
-                <button type="button" className="secondary" onClick={closeDailyExpense}>Cancelar</button>
-                <button type="button" onClick={submitDailyExpense}>
-                  {dailyExpenseModal.id ? "Guardar cambios" : "Añadir gasto"}
-                </button>
+              <div>
+                <h3 style={{ marginBottom: 8 }}>Gastos registrados</h3>
+                <table className="basic-table">
+                  <thead>
+                    <tr>
+                      <th>Concepto</th>
+                      <th style={{ textAlign: "right" }}>Importe</th>
+                      <th style={{ textAlign: "center" }}>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dailyExpensesForDay.length ? dailyExpensesForDay.map((e) => (
+                      <tr key={e.id} style={dailyExpenseDraft.id === e.id ? { background: "rgba(34,211,238,0.08)" } : undefined}>
+                        <td><strong>{e.concept}</strong></td>
+                        <td style={{ textAlign: "right", fontWeight: 700 }}>{money(e.amount)}</td>
+                        <td>
+                          <div style={{ display: "flex", justifyContent: "center", gap: 6 }}>
+                            <button type="button" className="secondary btn-sm" onClick={() => startEditDailyExpense(e)}>Editar</button>
+                            <button type="button" className="btn-sm" style={{ background: "#dc2626", color: "#fff" }} onClick={() => deleteDailyExpense(e.id)}>Borrar</button>
+                          </div>
+                        </td>
+                      </tr>
+                    )) : (
+                      <tr><td colSpan={3} className="muted" style={{ textAlign: "center", padding: 16 }}>
+                        Aún no hay gastos para este día.
+                      </td></tr>
+                    )}
+                  </tbody>
+                </table>
+                {dailyExpensesForDay.length > 0 && (
+                  <div style={{ marginTop: 8, display: "flex", justifyContent: "flex-end", gap: 12 }}>
+                    <strong>Total:</strong>
+                    <span style={{ fontWeight: 700 }}>
+                      {money(dailyExpensesForDay.reduce((s, e) => s + num(e.amount), 0))}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ borderTop: "1px solid var(--border)", paddingTop: 16 }}>
+                <h3 style={{ marginBottom: 8 }}>
+                  {dailyExpenseDraft.id ? "Editar gasto" : "Añadir nuevo gasto"}
+                </h3>
+                <div className="form-2col">
+                  <label>
+                    Concepto
+                    <input
+                      value={dailyExpenseDraft.concept}
+                      onChange={(e) => setDailyExpenseDraft((p) => ({ ...p, concept: e.target.value }))}
+                      placeholder="Ej. Compra material, factura..."
+                    />
+                  </label>
+                  <label>
+                    Importe
+                    <input
+                      value={dailyExpenseDraft.amount}
+                      onChange={(e) => setDailyExpenseDraft((p) => ({ ...p, amount: e.target.value.replace(/[^0-9.,]/g, "") }))}
+                      placeholder="0.00"
+                      inputMode="decimal"
+                    />
+                  </label>
+                </div>
+                {dailyExpenseError && <div className="error-box" style={{ marginTop: 10 }}>{dailyExpenseError}</div>}
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 12 }}>
+                  {dailyExpenseDraft.id && (
+                    <button type="button" className="secondary" onClick={cancelEditDailyExpense}>Cancelar edición</button>
+                  )}
+                  <button type="button" onClick={submitDailyExpenseDraft}>
+                    {dailyExpenseDraft.id ? "Guardar cambios" : "Añadir gasto"}
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+                <button type="button" className="secondary" onClick={closeDailyExpensesModal}>Cerrar</button>
               </div>
             </div>
           </div>
