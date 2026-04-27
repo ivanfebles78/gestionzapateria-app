@@ -230,6 +230,19 @@ def unlock_daily_sale(sale_date: date, db: Session = Depends(get_db), user: User
     return sale
 
 
+@router.post('/daily-sales/{sale_date}/recalculate', response_model=DailySaleRead)
+def recalculate_daily_sale(sale_date: date, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """Fuerza el recálculo de totales y balance del día desde los registros reales.
+    Útil cuando daily_expenses_total quedó desincronizado por algún motivo histórico."""
+    sale = db.query(DailySale).filter(DailySale.sale_date == sale_date).first()
+    if not sale:
+        raise HTTPException(status_code=404, detail='Daily sale not found')
+    refresh_daily_totals(db, sale)
+    db.commit()
+    db.refresh(sale)
+    return sale
+
+
 @router.get('/daily-expenses', response_model=list[DailyExpenseRead])
 def list_daily_expenses(sale_date: date | None = Query(default=None), db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     query = db.query(DailyExpense)

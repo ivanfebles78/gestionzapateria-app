@@ -71,6 +71,23 @@ function normalizeDateForSchedule(dateStr, extendedSchedule) {
   return getNextAllowedDate(dateStr, 1, extendedSchedule);
 }
 
+// Fecha tope: el "hoy" del navegador. No se puede ver/editar más allá.
+function getLatestSelectableDate(extendedSchedule) {
+  const today = getTodayKey();
+  if (isWorkingDay(today, extendedSchedule)) return today;
+  // Si hoy es domingo (horario normal), retroceder hasta encontrar el último día abierto.
+  let d = today;
+  while (!isWorkingDay(d, extendedSchedule)) d = addDays(d, -1);
+  return d;
+}
+
+function clampToToday(dateStr, extendedSchedule) {
+  const max = getLatestSelectableDate(extendedSchedule);
+  let normalized = normalizeDateForSchedule(dateStr, extendedSchedule);
+  if (normalized > max) return max;
+  return normalized;
+}
+
 function getMonthKey(dateStr) { return dateStr.slice(0, 7); }
 
 function getMonthLabel(monthKey) {
@@ -297,6 +314,11 @@ export default function App() {
   // Modal de gasto mensual
   const [monthlyExpenseModal, setMonthlyExpenseModal] = useState(null); // null | { category, amount }
 
+  // Registro de actividad (admin)
+  const [changeLogs, setChangeLogs] = useState([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState("");
+
   const todayKey = getTodayKey();
   const currentMonthKey = getMonthKey(todayKey);
 
@@ -342,6 +364,31 @@ export default function App() {
     if (!currentUser) return;
     reloadAll();
   }, [currentUser, reloadAll]);
+
+  // Cuando cambia el horario extendido (o lo cargamos por primera vez tras login),
+  // aseguramos que la fecha seleccionada sea válida y nunca futura.
+  useEffect(() => {
+    setSelectedDate((prev) => clampToToday(prev, extendedSchedule));
+  }, [extendedSchedule]);
+
+  // Cargar el registro de actividad solo cuando el admin abre la pestaña.
+  const reloadChangeLogs = useCallback(async () => {
+    if (!currentUser || currentUser.role !== "admin") return;
+    setLogsLoading(true);
+    setLogsError("");
+    try {
+      const list = await apiFetch("/api/admin/change-logs?limit=200");
+      setChangeLogs(Array.isArray(list) ? list : []);
+    } catch (err) {
+      setLogsError(err.message || "Error cargando registro de actividad");
+    } finally {
+      setLogsLoading(false);
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (tab === "logs") reloadChangeLogs();
+  }, [tab, reloadChangeLogs]);
 
   // ─── Cuando cambia el día seleccionado, reflejar venta + cargar gastos del día ───
   useEffect(() => {
@@ -560,19 +607,40 @@ export default function App() {
     }
   };
 
+  const maxSelectableDate = getLatestSelectableDate(extendedSchedule);
+  const nextDateCandidate = getNextAllowedDate(selectedDate, 1, extendedSchedule);
+  const canGoForward = nextDateCandidate <= maxSelectableDate;
+
   const goToPreviousAllowedDay = () => setSelectedDate((p) => getNextAllowedDate(p, -1, extendedSchedule));
-  const goToNextAllowedDay = () => setSelectedDate((p) => getNextAllowedDate(p, 1, extendedSchedule));
+  const goToNextAllowedDay = () => {
+    setSelectedDate((p) => {
+      const next = getNextAllowedDate(p, 1, extendedSchedule);
+      return next > maxSelectableDate ? p : next;
+    });
+  };
   const handleDateInputChange = (value) => {
     if (!value) return;
-    // Si elige un domingo en horario normal, saltamos al lunes (no rechazamos).
-    setSelectedDate(normalizeDateForSchedule(value, extendedSchedule));
+    // Si elige un domingo, saltamos al siguiente día abierto. Si pasa de hoy, lo limitamos a hoy.
+    setSelectedDate(clampToToday(value, extendedSchedule));
   };
 
   // ─── Gastos diarios (CRUD desde un único modal) ───
-  const openDailyExpensesModal = () => {
+  const openDailyExpensesModal = async () => {
     setDailyExpenseDraft({ id: null, concept: "", amount: "" });
     setDailyExpenseError("");
     setDailyExpensesModalOpen(true);
+    // Forzamos al backend a recalcular el total de gastos del día por si se quedó
+    // desincronizado en versiones anteriores (corrige la columna del histórico).
+    try {
+      const refreshed = await apiFetch(`/api/daily-sales/${selectedDate}/recalculate`, { method: "POST" });
+      if (refreshed) {
+        setAllSales((prev) => {
+          const idx = prev.findIndex((s) => s.sale_date === refreshed.sale_date);
+          if (idx === -1) return [...prev, refreshed];
+          const copy = prev.slice(); copy[idx] = refreshed; return copy;
+        });
+      }
+    } catch {/* puede no existir aún el daily_sale o el endpoint */}
   };
   const closeDailyExpensesModal = () => {
     setDailyExpensesModalOpen(false);
@@ -761,6 +829,9 @@ export default function App() {
         {currentUser.role === "admin" && (
           <button className={tab === "stats" ? "active" : ""} onClick={() => setTab("stats")}>Estadísticas</button>
         )}
+        {currentUser.role === "admin" && (
+          <button className={tab === "logs" ? "active" : ""} onClick={() => setTab("logs")}>Registro de actividad</button>
+        )}
       </div>
 
       {tab === "day" && (
@@ -786,11 +857,18 @@ export default function App() {
 
             <div className="date-nav" style={{ marginTop: 16 }}>
               <button type="button" className="secondary nav-btn" onClick={goToPreviousAllowedDay}>‹</button>
-              <input type="date" className="date-input" value={selectedDate} onChange={(e) => handleDateInputChange(e.target.value)} style={{ flex: "0 0 auto", width: 160 }} />
-              <button type="button" className="secondary nav-btn" onClick={goToNextAllowedDay}>›</button>
-              <button type="button" className="secondary btn-sm" onClick={() => setSelectedDate(normalizeDateForSchedule(todayKey, extendedSchedule))}>Hoy</button>
-              <button type="button" className="secondary btn-sm" onClick={() => setSelectedDate(normalizeDateForSchedule(addDays(todayKey, -7), extendedSchedule))}>-7d</button>
-              <button type="button" className="secondary btn-sm" onClick={() => setSelectedDate(normalizeDateForSchedule(addDays(todayKey, -14), extendedSchedule))}>-14d</button>
+              <input
+                type="date"
+                className="date-input"
+                value={selectedDate}
+                onChange={(e) => handleDateInputChange(e.target.value)}
+                max={maxSelectableDate}
+                style={{ flex: "0 0 auto", width: 160 }}
+              />
+              <button type="button" className="secondary nav-btn" onClick={goToNextAllowedDay} disabled={!canGoForward} title={canGoForward ? "" : "No se pueden ver días futuros"}>›</button>
+              <button type="button" className="secondary btn-sm" onClick={() => setSelectedDate(clampToToday(todayKey, extendedSchedule))}>Hoy</button>
+              <button type="button" className="secondary btn-sm" onClick={() => setSelectedDate(clampToToday(addDays(todayKey, -7), extendedSchedule))}>-7d</button>
+              <button type="button" className="secondary btn-sm" onClick={() => setSelectedDate(clampToToday(addDays(todayKey, -14), extendedSchedule))}>-14d</button>
             </div>
 
             {!extendedSchedule && (
@@ -1080,6 +1158,67 @@ export default function App() {
                 )}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {tab === "logs" && currentUser.role === "admin" && (
+        <div className="stack">
+          <div className="card">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <h2>Registro de actividad</h2>
+                <p className="muted">Historial de creaciones y modificaciones de los días (últimos 200 registros).</p>
+              </div>
+              <button type="button" className="secondary btn-sm" onClick={reloadChangeLogs} disabled={logsLoading}>
+                {logsLoading ? "Cargando..." : "Recargar"}
+              </button>
+            </div>
+            {logsError && <div className="error-box" style={{ marginTop: 12 }}>{logsError}</div>}
+            <div style={{ maxHeight: 560, overflowY: "auto", marginTop: 12 }}>
+              <table className="basic-table">
+                <thead>
+                  <tr>
+                    <th>Fecha y hora</th>
+                    <th>Usuario</th>
+                    <th>Acción</th>
+                    <th>Día</th>
+                    <th style={{ textAlign: "right" }}>Ventas</th>
+                    <th style={{ textAlign: "right" }}>Gastos día</th>
+                    <th style={{ textAlign: "right" }}>Balance</th>
+                    <th style={{ textAlign: "right" }}>Clientes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {changeLogs.length ? changeLogs.map((log) => {
+                    const isCreate = log.action === "create";
+                    const balance = num(log.daily_balance);
+                    return (
+                      <tr key={log.id}>
+                        <td>{new Date(log.changed_at).toLocaleString("es-ES")}</td>
+                        <td>{log.changed_by_display_name || "—"}</td>
+                        <td>
+                          <span className={isCreate ? "log-chip-create" : "log-chip-update"}>
+                            {isCreate ? "create" : "update"}
+                          </span>
+                        </td>
+                        <td>{formatDate(log.sale_date)}</td>
+                        <td style={{ textAlign: "right" }}>{money(log.total_sales)}</td>
+                        <td style={{ textAlign: "right" }}>{money(log.daily_expenses_total)}</td>
+                        <td style={{ textAlign: "right", color: balance >= 0 ? "#86efac" : "#fca5a5", fontWeight: 700 }}>
+                          {money(balance)}
+                        </td>
+                        <td style={{ textAlign: "right" }}>{log.customers_total ?? 0}</td>
+                      </tr>
+                    );
+                  }) : (
+                    <tr><td colSpan={8} className="muted" style={{ textAlign: "center", padding: 24 }}>
+                      {logsLoading ? "Cargando registro..." : "Sin actividad registrada."}
+                    </td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
