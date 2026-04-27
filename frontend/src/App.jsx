@@ -195,27 +195,46 @@ function StatCard({ title, value, hint }) {
   );
 }
 
-function ShiftPanel({ title, accent, shift, disabled, onChange }) {
+function ShiftPanel({ title, accent, shift, customers, disabled, onChangeAmount, onChangeCustomers }) {
   const total = shiftAmountTotal(shift);
+  const customersTotal = (customers?.cash || 0) + (customers?.card || 0) + (customers?.bizum || 0) + (customers?.bonos || 0);
   return (
     <div className={`form-block ${accent}`}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10, flexWrap: "wrap", gap: 6 }}>
         <h3 style={{ margin: 0 }}>{title}</h3>
-        <span style={{ fontWeight: 700, color: "#67e8f9", fontSize: 18 }}>{money(total)}</span>
+        <span style={{ fontWeight: 700, color: "#67e8f9", fontSize: 18 }}>
+          {money(total)} <span style={{ color: "var(--muted)", fontSize: 13, fontWeight: 500 }}>· {customersTotal} cliente{customersTotal === 1 ? "" : "s"}</span>
+        </span>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+      <div style={{ display: "grid", gap: 10 }}>
         {PAYMENT_METHODS.map((m) => (
-          <label key={m.key}>
-            {m.label}
+          <div key={m.key} style={{ display: "grid", gridTemplateColumns: "100px 1fr 90px", gap: 8, alignItems: "center" }}>
+            <span style={{ fontSize: 13, color: "var(--muted)", fontWeight: 600 }}>{m.label}</span>
             <input
               value={shift?.[m.key] ?? ""}
-              onChange={(e) => onChange(m.key, e.target.value)}
-              placeholder="0.00"
+              onChange={(e) => onChangeAmount(m.key, e.target.value)}
+              placeholder="0.00 €"
               disabled={disabled}
               inputMode="decimal"
+              aria-label={`Importe ${m.label}`}
             />
-          </label>
+            <input
+              value={customers?.[m.key] ?? 0}
+              onChange={(e) => onChangeCustomers(m.key, e.target.value)}
+              placeholder="0"
+              disabled={disabled}
+              inputMode="numeric"
+              aria-label={`Clientes ${m.label}`}
+              title="Nº de clientes"
+              style={{ textAlign: "center" }}
+            />
+          </div>
         ))}
+        <div style={{ display: "grid", gridTemplateColumns: "100px 1fr 90px", gap: 8, fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+          <span></span>
+          <span>Importe</span>
+          <span style={{ textAlign: "center" }}>Clientes</span>
+        </div>
       </div>
     </div>
   );
@@ -551,6 +570,16 @@ export default function App() {
     }));
   };
 
+  const updateCustomersField = (shift, methodKey, value) => {
+    const clean = value.replace(/[^0-9]/g, "");
+    const parsed = clean === "" ? 0 : parseInt(clean, 10);
+    const customersKey = `${shift}_customers`;
+    setSelectedSale((prev) => ({
+      ...prev,
+      [customersKey]: { ...(prev[customersKey] || emptyCustomers()), [methodKey]: parsed },
+    }));
+  };
+
   const saveDay = async () => {
     setSavingDay(true);
     setDayMessage("");
@@ -855,7 +884,10 @@ export default function App() {
               </div>
             )}
 
-            <div className="date-nav" style={{ marginTop: 16 }}>
+            <div style={{ marginTop: 16, fontSize: 20, fontWeight: 700, color: "#67e8f9", textTransform: "capitalize" }}>
+              {getWeekdayName(selectedDate)} · {formatDate(selectedDate)}
+            </div>
+            <div className="date-nav" style={{ marginTop: 8 }}>
               <button type="button" className="secondary nav-btn" onClick={goToPreviousAllowedDay}>‹</button>
               <input
                 type="date"
@@ -885,8 +917,10 @@ export default function App() {
                 title="Mañana"
                 accent="morning"
                 shift={selectedSale.morning}
+                customers={selectedSale.morning_customers}
                 disabled={isDateClosed}
-                onChange={(method, value) => updateShiftField("morning", method, value)}
+                onChangeAmount={(method, value) => updateShiftField("morning", method, value)}
+                onChangeCustomers={(method, value) => updateCustomersField("morning", method, value)}
               />
               {isAfternoonDisabled ? (
                 <div className="form-block">
@@ -898,8 +932,10 @@ export default function App() {
                   title="Tarde"
                   accent="afternoon"
                   shift={selectedSale.afternoon}
+                  customers={selectedSale.afternoon_customers}
                   disabled={isDateClosed}
-                  onChange={(method, value) => updateShiftField("afternoon", method, value)}
+                  onChangeAmount={(method, value) => updateShiftField("afternoon", method, value)}
+                  onChangeCustomers={(method, value) => updateCustomersField("afternoon", method, value)}
                 />
               )}
             </div>
