@@ -274,7 +274,10 @@ function LoginScreen({ onLoggedIn }) {
   return (
     <div className="center-screen">
       <form className="login-card" onSubmit={handleSubmit}>
-        <div>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 8 }}>
+          <img className="logo-img" src="/logo-zapateria.png" alt="Zapatería" style={{ width: 160 }} />
+        </div>
+        <div style={{ textAlign: "center" }}>
           <div className="eyebrow">Zapatería · Control</div>
           <h1 style={{ marginTop: 8 }}>Acceso a la aplicación</h1>
           <p className="muted" style={{ marginTop: 6 }}>Selecciona el usuario e introduce la contraseña.</p>
