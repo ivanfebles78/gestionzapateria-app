@@ -104,6 +104,12 @@ Variables necesarias:
 - `POSTGRES_PASSWORD`
 - `INIT_ADMIN_PASSWORD`
 - `INIT_STORE_PASSWORD`
+- `UPLOAD_DIR` (por defecto `/data/uploads`; debe coincidir con el mount path del Volume de Railway)
+- `MAX_UPLOAD_SIZE_MB` (opcional, por defecto 15)
+
+Volume:
+
+En el servicio del backend de Railway añade un Volume montado en `/data` (o el path que pongas en `UPLOAD_DIR`). Sin volumen, los adjuntos subidos se perderán en cada redeploy.
 
 ### 4. Frontend en Railway
 

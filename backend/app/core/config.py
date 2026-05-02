@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     INIT_ADMIN_PASSWORD: str = "Nicole@1"
     INIT_STORE_PASSWORD: str = "tienda"
 
+    UPLOAD_DIR: str = "/data/uploads"
+    MAX_UPLOAD_SIZE_MB: int = 15
+
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod
     def parse_cors(cls, value):

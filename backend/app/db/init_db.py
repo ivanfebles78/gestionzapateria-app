@@ -1,10 +1,23 @@
 from sqlalchemy.orm import Session
 
 from app.core.security import get_password_hash
+from app.models.monthly_expense import MonthlyExpense
+from app.models.recurring_expense_template import RecurringExpenseTemplate
 from app.models.user import User
 
 
-def init_db(db: Session) -> None:
+RECURRING_FIXED_CATEGORIES = [
+    'Agua y luz',
+    'Alarma',
+    'Alquiler',
+    'Empleado 1',
+    'Internet',
+    'Seguridad Social',
+    'Asociacion Vecinos Santa Cruz',
+]
+
+
+def _seed_users(db: Session) -> None:
     users_to_create = [
         {
             "username": "Ivan",
@@ -38,4 +51,40 @@ def init_db(db: Session) -> None:
             )
             db.add(db_user)
 
+
+def _latest_amount_for_category(db: Session, category: str) -> float:
+    row = (
+        db.query(MonthlyExpense)
+        .filter(MonthlyExpense.category == category)
+        .order_by(MonthlyExpense.month_key.desc())
+        .first()
+    )
+    return float(row.amount) if row else 0.0
+
+
+def _seed_recurring_templates(db: Session) -> None:
+    """Crea las plantillas recurrentes si aún no existen.
+
+    Para no perder los importes ya introducidos en meses anteriores, intenta
+    leer el último importe registrado por categoría en monthly_expenses y lo
+    usa como valor inicial de la plantilla. Si nunca se registró, queda en 0.
+    """
+    has_templates = db.query(RecurringExpenseTemplate).first() is not None
+    if has_templates:
+        return
+
+    for category in RECURRING_FIXED_CATEGORIES:
+        seed_amount = _latest_amount_for_category(db, category)
+        db.add(
+            RecurringExpenseTemplate(
+                category=category,
+                amount=seed_amount,
+                active=True,
+            )
+        )
+
+
+def init_db(db: Session) -> None:
+    _seed_users(db)
+    _seed_recurring_templates(db)
     db.commit()

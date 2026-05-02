@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import "./styles.css";
-import { apiFetch, ApiError, getToken, setToken } from "./lib/api.js";
+import { apiDownload, apiFetch, apiBlob, ApiError, getToken, setToken } from "./lib/api.js";
 
 const DAILY_TARGET = 500;
 const MONTHLY_TARGET = 12000;
@@ -13,6 +13,7 @@ const expenseCategories = [
   "Empleado 1",
   "Empleado 2",
   "Seguridad Social",
+  "Asociacion Vecinos Santa Cruz",
   "Otros",
 ];
 
@@ -22,6 +23,14 @@ const PAYMENT_METHODS = [
   { key: "bizum", label: "Bizum" },
   { key: "bonos", label: "Bonos" },
 ];
+
+const ATTACHMENT_KINDS = [
+  { key: "ticket_manana", label: "Ticket mañana" },
+  { key: "ticket_cierre", label: "Ticket cierre" },
+  { key: "gasto", label: "Gasto" },
+  { key: "otro", label: "Otro" },
+];
+const ATTACHMENT_KIND_LABEL = Object.fromEntries(ATTACHMENT_KINDS.map((k) => [k.key, k.label]));
 
 function emptyShift() {
   return { cash: "", card: "", bizum: "", bonos: "" };
@@ -67,15 +76,12 @@ function getNextAllowedDate(dateStr, direction, extendedSchedule) {
 
 function normalizeDateForSchedule(dateStr, extendedSchedule) {
   if (isWorkingDay(dateStr, extendedSchedule)) return dateStr;
-  // Si caemos en domingo (horario normal), saltar HACIA ADELANTE → Lunes.
   return getNextAllowedDate(dateStr, 1, extendedSchedule);
 }
 
-// Fecha tope: el "hoy" del navegador. No se puede ver/editar más allá.
 function getLatestSelectableDate(extendedSchedule) {
   const today = getTodayKey();
   if (isWorkingDay(today, extendedSchedule)) return today;
-  // Si hoy es domingo (horario normal), retroceder hasta encontrar el último día abierto.
   let d = today;
   while (!isWorkingDay(d, extendedSchedule)) d = addDays(d, -1);
   return d;
@@ -126,22 +132,46 @@ function shiftAmountTotal(shift) {
   return num(shift.cash) + num(shift.card) + num(shift.bizum) + num(shift.bonos);
 }
 
-// Convierte un DailySale del backend al estado local (mañana/tarde con strings editables).
+function formatBytes(bytes) {
+  const n = Number(bytes || 0);
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+// Convierte un DailySale del backend al estado local. El "cierre" se calcula
+// sumando mañana + tarde (lo que ve el usuario en el TPV al final del día).
 function saleToLocal(sale) {
+  const morning = {
+    cash: String(sale.morning_cash ?? ""),
+    card: String(sale.morning_card ?? ""),
+    bizum: String(sale.morning_bizum ?? ""),
+    bonos: String(sale.morning_bonos ?? ""),
+  };
+  const afternoon = {
+    cash: String(sale.afternoon_cash ?? ""),
+    card: String(sale.afternoon_card ?? ""),
+    bizum: String(sale.afternoon_bizum ?? ""),
+    bonos: String(sale.afternoon_bonos ?? ""),
+  };
+  // Solo prerellenamos el cierre si ya había datos de tarde guardados; así, al
+  // entrar a un día con solo mañana, el campo queda vacío esperando los
+  // totales del TPV al final de la jornada.
+  const afternoonHasContent =
+    num(sale.afternoon_cash) || num(sale.afternoon_card) || num(sale.afternoon_bizum) || num(sale.afternoon_bonos);
+  const closing = afternoonHasContent
+    ? {
+        cash: String(num(sale.morning_cash) + num(sale.afternoon_cash)),
+        card: String(num(sale.morning_card) + num(sale.afternoon_card)),
+        bizum: String(num(sale.morning_bizum) + num(sale.afternoon_bizum)),
+        bonos: String(num(sale.morning_bonos) + num(sale.afternoon_bonos)),
+      }
+    : emptyShift();
   return {
     sale_date: sale.sale_date,
-    morning: {
-      cash: String(sale.morning_cash ?? ""),
-      card: String(sale.morning_card ?? ""),
-      bizum: String(sale.morning_bizum ?? ""),
-      bonos: String(sale.morning_bonos ?? ""),
-    },
-    afternoon: {
-      cash: String(sale.afternoon_cash ?? ""),
-      card: String(sale.afternoon_card ?? ""),
-      bizum: String(sale.afternoon_bizum ?? ""),
-      bonos: String(sale.afternoon_bonos ?? ""),
-    },
+    morning,
+    afternoon,
+    closing,
     morning_customers: {
       cash: sale.morning_cash_customers || 0,
       card: sale.morning_card_customers || 0,
@@ -169,6 +199,7 @@ function emptyLocalSale(dateStr) {
     sale_date: dateStr,
     morning: emptyShift(),
     afternoon: emptyShift(),
+    closing: emptyShift(),
     morning_customers: emptyCustomers(),
     afternoon_customers: emptyCustomers(),
     worked: !isSunday(dateStr),
@@ -195,13 +226,13 @@ function StatCard({ title, value, hint }) {
   );
 }
 
-function ShiftPanel({ title, accent, shift, customers, disabled, onChangeAmount, onChangeCustomers }) {
+function MorningPanel({ shift, customers, disabled, onChangeAmount, onChangeCustomers }) {
   const total = shiftAmountTotal(shift);
   const customersTotal = (customers?.cash || 0) + (customers?.card || 0) + (customers?.bizum || 0) + (customers?.bonos || 0);
   return (
-    <div className={`form-block ${accent}`}>
+    <div className="form-block morning">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10, flexWrap: "wrap", gap: 6 }}>
-        <h3 style={{ margin: 0 }}>{title}</h3>
+        <h3 style={{ margin: 0 }}>Mañana</h3>
         <span style={{ fontWeight: 700, color: "#67e8f9", fontSize: 18 }}>
           {money(total)} <span style={{ color: "var(--muted)", fontSize: 13, fontWeight: 500 }}>· {customersTotal} cliente{customersTotal === 1 ? "" : "s"}</span>
         </span>
@@ -235,6 +266,78 @@ function ShiftPanel({ title, accent, shift, customers, disabled, onChangeAmount,
           <span>Importe</span>
           <span style={{ textAlign: "center" }}>Clientes</span>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Cierre del día: el usuario introduce los TOTALES del día (tal y como los da el TPV).
+// La tarde se calcula automáticamente como cierre − mañana, por método de pago.
+function ClosingPanel({ closing, morning, afternoonCustomers, disabled, onChangeClosing, onChangeAfternoonCustomers, errorByMethod }) {
+  const totalClosing = shiftAmountTotal(closing);
+  const totalMorning = shiftAmountTotal(morning);
+  const derivedAfternoon = Math.max(0, totalClosing - totalMorning);
+  const afternoonCustomersTotal = (afternoonCustomers?.cash || 0) + (afternoonCustomers?.card || 0) + (afternoonCustomers?.bizum || 0) + (afternoonCustomers?.bonos || 0);
+
+  return (
+    <div className="form-block afternoon">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4, flexWrap: "wrap", gap: 6 }}>
+        <h3 style={{ margin: 0 }}>Cierre del día (totales del TPV)</h3>
+        <span style={{ fontWeight: 700, color: "#67e8f9", fontSize: 18 }}>
+          {money(totalClosing)}
+        </span>
+      </div>
+      <p className="muted" style={{ fontSize: 12, marginBottom: 10 }}>
+        Introduce el total del día por método (mañana + tarde). La tarde se calcula automáticamente.
+      </p>
+      <div style={{ display: "grid", gap: 10 }}>
+        {PAYMENT_METHODS.map((m) => {
+          const closingVal = num(closing?.[m.key]);
+          const morningVal = num(morning?.[m.key]);
+          const derived = closingVal - morningVal;
+          const hasError = !!errorByMethod?.[m.key];
+          return (
+            <div key={m.key} style={{ display: "grid", gridTemplateColumns: "100px 1fr 90px", gap: 8, alignItems: "center" }}>
+              <span style={{ fontSize: 13, color: "var(--muted)", fontWeight: 600 }}>{m.label}</span>
+              <div>
+                <input
+                  value={closing?.[m.key] ?? ""}
+                  onChange={(e) => onChangeClosing(m.key, e.target.value)}
+                  placeholder="Total del día"
+                  disabled={disabled}
+                  inputMode="decimal"
+                  aria-label={`Cierre ${m.label}`}
+                  style={hasError ? { borderColor: "rgba(248,113,113,0.6)" } : undefined}
+                />
+                <div className={hasError ? "muted" : "muted"} style={{ fontSize: 11, marginTop: 4, color: hasError ? "#fca5a5" : "var(--muted)" }}>
+                  {hasError
+                    ? `El cierre no puede ser menor que la mañana (${money(morningVal)})`
+                    : `Tarde calculada: ${money(Math.max(0, derived))}`}
+                </div>
+              </div>
+              <input
+                value={afternoonCustomers?.[m.key] ?? 0}
+                onChange={(e) => onChangeAfternoonCustomers(m.key, e.target.value)}
+                placeholder="0"
+                disabled={disabled}
+                inputMode="numeric"
+                aria-label={`Clientes tarde ${m.label}`}
+                title="Nº de clientes de la tarde"
+                style={{ textAlign: "center" }}
+              />
+            </div>
+          );
+        })}
+        <div style={{ display: "grid", gridTemplateColumns: "100px 1fr 90px", gap: 8, fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+          <span></span>
+          <span>Total día (TPV)</span>
+          <span style={{ textAlign: "center" }}>Clientes tarde</span>
+        </div>
+      </div>
+      <div style={{ marginTop: 12, padding: "8px 12px", background: "rgba(34,211,238,0.06)", borderRadius: 8, fontSize: 13 }}>
+        <strong>Tarde total: </strong>
+        <span style={{ color: "#67e8f9", fontWeight: 700 }}>{money(derivedAfternoon)}</span>
+        <span className="muted" style={{ marginLeft: 8 }}>· {afternoonCustomersTotal} cliente{afternoonCustomersTotal === 1 ? "" : "s"}</span>
       </div>
     </div>
   );
@@ -314,29 +417,34 @@ export default function App() {
   const [tab, setTab] = useState("day");
   const [extendedSchedule, setExtendedScheduleState] = useState(false);
 
-  // Estado de datos del backend
-  const [allSales, setAllSales] = useState([]); // [DailySaleRead, ...] (todas)
-  const [monthlyExpenses, setMonthlyExpenses] = useState([]); // [MonthlyExpenseRead, ...]
+  const [allSales, setAllSales] = useState([]);
+  const [monthlyExpenses, setMonthlyExpenses] = useState([]);
+  const [recurringTemplates, setRecurringTemplates] = useState([]);
 
-  // Día seleccionado y su forma editable
   const [selectedDate, setSelectedDate] = useState(getTodayKey());
   const [selectedSale, setSelectedSale] = useState(emptyLocalSale(getTodayKey()));
   const [dailyExpensesForDay, setDailyExpensesForDay] = useState([]);
+  const [attachmentsForDay, setAttachmentsForDay] = useState([]);
   const [savingDay, setSavingDay] = useState(false);
   const [dayMessage, setDayMessage] = useState("");
 
-  // Mes seleccionado para tab mensual
   const [selectedMonth, setSelectedMonth] = useState(getMonthKey(getTodayKey()));
 
-  // Modal de gastos diarios — abre el panel de gestión completo (lista + form)
   const [dailyExpensesModalOpen, setDailyExpensesModalOpen] = useState(false);
   const [dailyExpenseDraft, setDailyExpenseDraft] = useState({ id: null, concept: "", amount: "" });
   const [dailyExpenseError, setDailyExpenseError] = useState("");
 
-  // Modal de gasto mensual
-  const [monthlyExpenseModal, setMonthlyExpenseModal] = useState(null); // null | { category, amount }
+  const [monthlyExpenseModal, setMonthlyExpenseModal] = useState(null);
 
-  // Registro de actividad (admin)
+  const [attachmentModal, setAttachmentModal] = useState(null); // null | { kind, file }
+  const [attachmentError, setAttachmentError] = useState("");
+  const [attachmentBusy, setAttachmentBusy] = useState(false);
+
+  const [recurringModal, setRecurringModal] = useState(null); // null | { id, category, amount, active }
+  const [recurringError, setRecurringError] = useState("");
+
+  const [exporting, setExporting] = useState(false);
+
   const [changeLogs, setChangeLogs] = useState([]);
   const [logsLoading, setLogsLoading] = useState(false);
   const [logsError, setLogsError] = useState("");
@@ -387,13 +495,46 @@ export default function App() {
     reloadAll();
   }, [currentUser, reloadAll]);
 
-  // Cuando cambia el horario extendido (o lo cargamos por primera vez tras login),
-  // aseguramos que la fecha seleccionada sea válida y nunca futura.
   useEffect(() => {
     setSelectedDate((prev) => clampToToday(prev, extendedSchedule));
   }, [extendedSchedule]);
 
-  // Cargar el registro de actividad solo cuando el admin abre la pestaña.
+  // Plantillas recurrentes (solo admin)
+  const reloadRecurringTemplates = useCallback(async () => {
+    if (!currentUser || currentUser.role !== "admin") return;
+    try {
+      const list = await apiFetch("/api/recurring-expenses");
+      setRecurringTemplates(Array.isArray(list) ? list : []);
+    } catch (err) {
+      // No bloqueamos la app si no se pueden cargar.
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    reloadRecurringTemplates();
+  }, [reloadRecurringTemplates]);
+
+  // Al cambiar de mes en la pestaña mensual, pedir el mes con month_key para
+  // que el backend cree (si faltan) las filas de gastos recurrentes.
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== "admin") return;
+    if (tab !== "month") return;
+    let alive = true;
+    (async () => {
+      try {
+        const list = await apiFetch(`/api/monthly-expenses?month_key=${encodeURIComponent(selectedMonth)}`);
+        if (!alive || !Array.isArray(list)) return;
+        setMonthlyExpenses((prev) => {
+          const others = prev.filter((e) => e.month_key !== selectedMonth);
+          return [...others, ...list];
+        });
+      } catch (err) {
+        // Sin ruido si falla; el usuario ya verá los datos al recargar.
+      }
+    })();
+    return () => { alive = false; };
+  }, [tab, selectedMonth, currentUser]);
+
   const reloadChangeLogs = useCallback(async () => {
     if (!currentUser || currentUser.role !== "admin") return;
     setLogsLoading(true);
@@ -412,7 +553,7 @@ export default function App() {
     if (tab === "logs") reloadChangeLogs();
   }, [tab, reloadChangeLogs]);
 
-  // ─── Cuando cambia el día seleccionado, reflejar venta + cargar gastos del día ───
+  // ─── Cuando cambia el día seleccionado: venta + gastos diarios + adjuntos ───
   useEffect(() => {
     if (!currentUser) return;
     const found = allSales.find((s) => s.sale_date === selectedDate);
@@ -421,10 +562,18 @@ export default function App() {
     let alive = true;
     (async () => {
       try {
-        const list = await apiFetch(`/api/daily-expenses?sale_date=${encodeURIComponent(selectedDate)}`);
-        if (alive) setDailyExpensesForDay(Array.isArray(list) ? list : []);
+        const [expenses, attachments] = await Promise.all([
+          apiFetch(`/api/daily-expenses?sale_date=${encodeURIComponent(selectedDate)}`),
+          apiFetch(`/api/daily-attachments?sale_date=${encodeURIComponent(selectedDate)}`),
+        ]);
+        if (!alive) return;
+        setDailyExpensesForDay(Array.isArray(expenses) ? expenses : []);
+        setAttachmentsForDay(Array.isArray(attachments) ? attachments : []);
       } catch (err) {
-        if (alive) setDailyExpensesForDay([]);
+        if (alive) {
+          setDailyExpensesForDay([]);
+          setAttachmentsForDay([]);
+        }
       }
     })();
     return () => { alive = false; };
@@ -436,7 +585,35 @@ export default function App() {
   const isDateClosed = !extendedSchedule && isSelectedDateSunday;
 
   const morningTotal = shiftAmountTotal(selectedSale.morning);
-  const afternoonTotal = isAfternoonDisabled ? 0 : shiftAmountTotal(selectedSale.afternoon);
+
+  // Cierre y tarde derivada por método.
+  const closingByMethod = selectedSale.closing || emptyShift();
+  const closingErrorByMethod = useMemo(() => {
+    if (isAfternoonDisabled || isDateClosed) return {};
+    const errs = {};
+    for (const m of PAYMENT_METHODS) {
+      const morningV = num(selectedSale.morning?.[m.key]);
+      const closingV = num(closingByMethod?.[m.key]);
+      // Solo marcamos error si el cierre está rellenado y es menor que la mañana.
+      const closingHasValue = (closingByMethod?.[m.key] ?? "").toString().trim() !== "";
+      if (closingHasValue && closingV < morningV - 1e-9) errs[m.key] = true;
+    }
+    return errs;
+  }, [closingByMethod, selectedSale.morning, isAfternoonDisabled, isDateClosed]);
+  const hasClosingError = Object.keys(closingErrorByMethod).length > 0;
+
+  const derivedAfternoonByMethod = useMemo(() => {
+    const out = { cash: 0, card: 0, bizum: 0, bonos: 0 };
+    if (isAfternoonDisabled || isDateClosed) return out;
+    for (const m of PAYMENT_METHODS) {
+      const morningV = num(selectedSale.morning?.[m.key]);
+      const closingV = num(closingByMethod?.[m.key]);
+      out[m.key] = Math.max(0, closingV - morningV);
+    }
+    return out;
+  }, [closingByMethod, selectedSale.morning, isAfternoonDisabled, isDateClosed]);
+
+  const afternoonTotal = derivedAfternoonByMethod.cash + derivedAfternoonByMethod.card + derivedAfternoonByMethod.bizum + derivedAfternoonByMethod.bonos;
   const selectedDayTotal = morningTotal + afternoonTotal;
 
   // KPIs del mes actual
@@ -461,7 +638,6 @@ export default function App() {
   const currentMonthExpenses = monthlyExpensesByMonth[currentMonthKey] || 0;
   const currentMonthBalance = currentMonthSales - currentMonthExpenses;
 
-  // Mes visualizado
   const viewedMonthSales = monthlySalesByMonth[selectedMonth] || 0;
   const viewedMonthExpensesTotal = monthlyExpensesByMonth[selectedMonth] || 0;
   const viewedMonthBalance = viewedMonthSales - viewedMonthExpensesTotal;
@@ -470,7 +646,6 @@ export default function App() {
     [monthlyExpenses, selectedMonth]
   );
 
-  // Desglose por método de pago en el mes visualizado
   const viewedMonthMethodTotals = useMemo(() => {
     const t = { cash: 0, card: 0, bizum: 0, bonos: 0 };
     for (const s of allSales) {
@@ -483,7 +658,6 @@ export default function App() {
     return t;
   }, [allSales, selectedMonth]);
 
-  // Stats globales
   const stats = useMemo(() => {
     const sortedSales = [...allSales].sort((a, b) => a.sale_date.localeCompare(b.sale_date));
     let daysMeetingTarget = 0;
@@ -565,11 +739,19 @@ export default function App() {
   }, [allSales, monthlySalesByMonth, monthlyExpensesByMonth]);
 
   // ─── Acciones ───
-  const updateShiftField = (shift, methodKey, value) => {
+  const updateMorningField = (methodKey, value) => {
     const clean = value.replace(/[^0-9.,]/g, "").replace(",", ".");
     setSelectedSale((prev) => ({
       ...prev,
-      [shift]: { ...prev[shift], [methodKey]: clean },
+      morning: { ...prev.morning, [methodKey]: clean },
+    }));
+  };
+
+  const updateClosingField = (methodKey, value) => {
+    const clean = value.replace(/[^0-9.,]/g, "").replace(",", ".");
+    setSelectedSale((prev) => ({
+      ...prev,
+      closing: { ...(prev.closing || emptyShift()), [methodKey]: clean },
     }));
   };
 
@@ -584,9 +766,16 @@ export default function App() {
   };
 
   const saveDay = async () => {
+    if (hasClosingError) {
+      setDayMessage("Error: el cierre no puede ser inferior a la mañana en algún método.");
+      return;
+    }
     setSavingDay(true);
     setDayMessage("");
     try {
+      const afternoonPayload = isAfternoonDisabled
+        ? { cash: 0, card: 0, bizum: 0, bonos: 0 }
+        : derivedAfternoonByMethod;
       const payload = {
         sale_date: selectedDate,
         morning_cash: num(selectedSale.morning.cash),
@@ -597,10 +786,10 @@ export default function App() {
         morning_card_customers: selectedSale.morning_customers.card || 0,
         morning_bizum_customers: selectedSale.morning_customers.bizum || 0,
         morning_bonos_customers: selectedSale.morning_customers.bonos || 0,
-        afternoon_cash: isAfternoonDisabled ? 0 : num(selectedSale.afternoon.cash),
-        afternoon_card: isAfternoonDisabled ? 0 : num(selectedSale.afternoon.card),
-        afternoon_bizum: isAfternoonDisabled ? 0 : num(selectedSale.afternoon.bizum),
-        afternoon_bonos: isAfternoonDisabled ? 0 : num(selectedSale.afternoon.bonos),
+        afternoon_cash: afternoonPayload.cash,
+        afternoon_card: afternoonPayload.card,
+        afternoon_bizum: afternoonPayload.bizum,
+        afternoon_bonos: afternoonPayload.bonos,
         afternoon_cash_customers: selectedSale.afternoon_customers.cash || 0,
         afternoon_card_customers: selectedSale.afternoon_customers.card || 0,
         afternoon_bizum_customers: selectedSale.afternoon_customers.bizum || 0,
@@ -652,17 +841,14 @@ export default function App() {
   };
   const handleDateInputChange = (value) => {
     if (!value) return;
-    // Si elige un domingo, saltamos al siguiente día abierto. Si pasa de hoy, lo limitamos a hoy.
     setSelectedDate(clampToToday(value, extendedSchedule));
   };
 
-  // ─── Gastos diarios (CRUD desde un único modal) ───
+  // ─── Gastos diarios ───
   const openDailyExpensesModal = async () => {
     setDailyExpenseDraft({ id: null, concept: "", amount: "" });
     setDailyExpenseError("");
     setDailyExpensesModalOpen(true);
-    // Forzamos al backend a recalcular el total de gastos del día por si se quedó
-    // desincronizado en versiones anteriores (corrige la columna del histórico).
     try {
       const refreshed = await apiFetch(`/api/daily-sales/${selectedDate}/recalculate`, { method: "POST" });
       if (refreshed) {
@@ -672,7 +858,7 @@ export default function App() {
           const copy = prev.slice(); copy[idx] = refreshed; return copy;
         });
       }
-    } catch {/* puede no existir aún el daily_sale o el endpoint */}
+    } catch {/* puede no existir aún el daily_sale */}
   };
   const closeDailyExpensesModal = () => {
     setDailyExpensesModalOpen(false);
@@ -698,7 +884,7 @@ export default function App() {
           const copy = prev.slice(); copy[idx] = fresh[0]; return copy;
         });
       }
-    } catch {/* ignorar */}
+    } catch {}
   };
 
   const submitDailyExpenseDraft = async () => {
@@ -724,7 +910,6 @@ export default function App() {
         setDailyExpensesForDay((prev) => [created, ...prev]);
       }
       await refreshDayFromBackend();
-      // Reset draft tras guardar para poder añadir otro inmediatamente
       setDailyExpenseDraft({ id: null, concept: "", amount: "" });
     } catch (err) {
       setDailyExpenseError(err.message || "Error al guardar");
@@ -736,7 +921,6 @@ export default function App() {
     try {
       await apiFetch(`/api/daily-expenses/${id}`, { method: "DELETE" });
       setDailyExpensesForDay((prev) => prev.filter((e) => e.id !== id));
-      // Si estaba editándose el que acabamos de borrar, limpiar form
       if (dailyExpenseDraft.id === id) {
         setDailyExpenseDraft({ id: null, concept: "", amount: "" });
       }
@@ -746,7 +930,7 @@ export default function App() {
     }
   };
 
-  // ─── Gastos mensuales (upsert por categoría) ───
+  // ─── Gastos mensuales ───
   const openMonthlyExpense = (existing) => {
     setMonthlyExpenseModal({
       category: existing?.category || "Otros",
@@ -796,12 +980,147 @@ export default function App() {
     }
   };
 
+  // ─── Plantillas recurrentes ───
+  const openRecurringModal = (existing) => {
+    setRecurringModal({
+      id: existing?.id ?? null,
+      category: existing?.category || "",
+      amount: existing ? String(existing.amount) : "",
+      active: existing ? !!existing.active : true,
+    });
+    setRecurringError("");
+  };
+  const closeRecurringModal = () => {
+    setRecurringModal(null);
+    setRecurringError("");
+  };
+  const submitRecurringModal = async () => {
+    if (!recurringModal) return;
+    const category = (recurringModal.category || "").trim();
+    const amount = Number(String(recurringModal.amount).replace(",", "."));
+    if (!category || !Number.isFinite(amount) || amount < 0) {
+      setRecurringError("Categoría e importe son obligatorios.");
+      return;
+    }
+    try {
+      const updated = await apiFetch("/api/recurring-expenses", {
+        method: "PUT",
+        body: JSON.stringify({ category, amount, active: !!recurringModal.active }),
+      });
+      setRecurringTemplates((prev) => {
+        const idx = prev.findIndex((t) => t.category === updated.category);
+        if (idx === -1) return [...prev, updated];
+        const copy = prev.slice(); copy[idx] = updated; return copy;
+      });
+      closeRecurringModal();
+    } catch (err) {
+      setRecurringError(err.message || "Error al guardar la plantilla");
+    }
+  };
+  const deleteRecurringTemplate = async (tpl) => {
+    if (!confirm(`¿Borrar la plantilla "${tpl.category}"? Los meses ya guardados no se tocan.`)) return;
+    try {
+      await apiFetch(`/api/recurring-expenses/${tpl.id}`, { method: "DELETE" });
+      setRecurringTemplates((prev) => prev.filter((t) => t.id !== tpl.id));
+    } catch (err) {
+      setGlobalError(err.message);
+    }
+  };
+
+  // ─── Adjuntos ───
+  const openAttachmentModal = () => {
+    setAttachmentModal({ kind: "ticket_cierre", file: null });
+    setAttachmentError("");
+  };
+  const closeAttachmentModal = () => {
+    setAttachmentModal(null);
+    setAttachmentError("");
+    setAttachmentBusy(false);
+  };
+  const submitAttachment = async () => {
+    if (!attachmentModal?.file) {
+      setAttachmentError("Selecciona o haz una foto.");
+      return;
+    }
+    setAttachmentBusy(true);
+    setAttachmentError("");
+    try {
+      const fd = new FormData();
+      fd.append("sale_date", selectedDate);
+      fd.append("kind", attachmentModal.kind);
+      fd.append("file", attachmentModal.file);
+      const created = await apiFetch("/api/daily-attachments", { method: "POST", body: fd });
+      setAttachmentsForDay((prev) => [created, ...prev]);
+      closeAttachmentModal();
+    } catch (err) {
+      setAttachmentError(err.message || "Error al subir el adjunto");
+    } finally {
+      setAttachmentBusy(false);
+    }
+  };
+  const deleteAttachment = async (att) => {
+    if (!confirm(`¿Borrar el adjunto "${att.original_filename}"?`)) return;
+    try {
+      await apiFetch(`/api/daily-attachments/${att.id}`, { method: "DELETE" });
+      setAttachmentsForDay((prev) => prev.filter((a) => a.id !== att.id));
+    } catch (err) {
+      setGlobalError(err.message);
+    }
+  };
+  const viewAttachment = async (att) => {
+    // Como el endpoint requiere Authorization, descargamos como blob y
+    // abrimos un object URL en pestaña nueva para visualizar inline.
+    try {
+      const blob = await apiBlob(`/api/daily-attachments/${att.id}/file`);
+      const url = URL.createObjectURL(blob);
+      const win = window.open(url, "_blank");
+      // Liberamos el object URL un poco más tarde para no romper la pestaña.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      if (!win) {
+        // Pop-up bloqueado: caemos a descarga.
+        await apiDownload(`/api/daily-attachments/${att.id}/file`, att.original_filename);
+      }
+    } catch (err) {
+      setGlobalError(err.message || "No se pudo abrir el adjunto");
+    }
+  };
+
+  // ─── Exportaciones ───
+  const exportSalesXlsx = async () => {
+    setExporting(true);
+    try {
+      await apiDownload(
+        `/api/exports/sales.xlsx?month_key=${encodeURIComponent(selectedMonth)}`,
+        `ventas_${selectedMonth}.xlsx`,
+      );
+    } catch (err) {
+      setGlobalError(err.message || "Error exportando ventas");
+    } finally {
+      setExporting(false);
+    }
+  };
+  const exportAttachmentsZip = async () => {
+    setExporting(true);
+    try {
+      await apiDownload(
+        `/api/exports/attachments.zip?month_key=${encodeURIComponent(selectedMonth)}`,
+        `adjuntos_${selectedMonth}.zip`,
+      );
+    } catch (err) {
+      setGlobalError(err.message || "Error exportando adjuntos");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const logout = () => {
     setToken(null);
     setCurrentUser(null);
     setAllSales([]);
     setMonthlyExpenses([]);
     setDailyExpensesForDay([]);
+    setAttachmentsForDay([]);
+    setRecurringTemplates([]);
   };
 
   // ─── Render ───
@@ -816,8 +1135,6 @@ export default function App() {
   const dailyProgress = Math.min((selectedDayTotal / DAILY_TARGET) * 100, 100);
   const monthlyProgress = Math.min((viewedMonthSales / MONTHLY_TARGET) * 100, 100);
 
-  // Histórico ordenado para la tabla inferior. En horario normal ocultamos los
-  // domingos para no ensuciar la vista (la tienda no abre).
   const historyDesc = [...allSales]
     .filter((s) => extendedSchedule || !isSunday(s.sale_date))
     .sort((a, b) => b.sale_date.localeCompare(a.sale_date));
@@ -870,7 +1187,7 @@ export default function App() {
         <div className="stack">
           <div className="card">
             <h2>Registro de ventas por día</h2>
-            <p className="muted">Datos guardados en PostgreSQL · Desglose por método de pago en mañana y tarde.</p>
+            <p className="muted">Introduce las ventas de la mañana y, al cerrar, los totales del TPV. La tarde se calcula sola.</p>
 
             {currentUser.role === "admin" && (
               <div className="section-block" style={{ marginTop: 16 }}>
@@ -916,29 +1233,27 @@ export default function App() {
             )}
 
             <div className="form-2col" style={{ marginTop: 16 }}>
-              <ShiftPanel
-                title="Mañana"
-                accent="morning"
+              <MorningPanel
                 shift={selectedSale.morning}
                 customers={selectedSale.morning_customers}
                 disabled={isDateClosed}
-                onChangeAmount={(method, value) => updateShiftField("morning", method, value)}
+                onChangeAmount={updateMorningField}
                 onChangeCustomers={(method, value) => updateCustomersField("morning", method, value)}
               />
               {isAfternoonDisabled ? (
                 <div className="form-block">
-                  <h3 style={{ margin: 0 }}>Tarde</h3>
+                  <h3 style={{ margin: 0 }}>Cierre del día</h3>
                   <p className="muted" style={{ marginTop: 8 }}>Sábado tarde deshabilitado en horario normal.</p>
                 </div>
               ) : (
-                <ShiftPanel
-                  title="Tarde"
-                  accent="afternoon"
-                  shift={selectedSale.afternoon}
-                  customers={selectedSale.afternoon_customers}
+                <ClosingPanel
+                  closing={selectedSale.closing}
+                  morning={selectedSale.morning}
+                  afternoonCustomers={selectedSale.afternoon_customers}
                   disabled={isDateClosed}
-                  onChangeAmount={(method, value) => updateShiftField("afternoon", method, value)}
-                  onChangeCustomers={(method, value) => updateCustomersField("afternoon", method, value)}
+                  onChangeClosing={updateClosingField}
+                  onChangeAfternoonCustomers={(method, value) => updateCustomersField("afternoon", method, value)}
+                  errorByMethod={closingErrorByMethod}
                 />
               )}
             </div>
@@ -951,9 +1266,14 @@ export default function App() {
             </div>
 
             <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 16, flexWrap: "wrap" }}>
-              <button type="button" onClick={saveDay} disabled={savingDay || isDateClosed}>
+              <button type="button" onClick={saveDay} disabled={savingDay || isDateClosed || hasClosingError}>
                 {savingDay ? "Guardando..." : "Guardar día"}
               </button>
+              {hasClosingError && (
+                <span className="error-box" style={{ padding: "6px 10px", marginBottom: 0 }}>
+                  Revisa los totales del cierre: alguno es menor que la mañana.
+                </span>
+              )}
               {dayMessage && <span className={dayMessage.startsWith("Error") ? "error-box" : "muted"} style={{ padding: "6px 10px" }}>{dayMessage}</span>}
             </div>
           </div>
@@ -979,6 +1299,39 @@ export default function App() {
               </div>
               <button type="button" onClick={openDailyExpensesModal}>Gastos</button>
             </div>
+          </div>
+
+          <div className="card">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <h2>Adjuntos del día</h2>
+                <p className="muted">
+                  {formatDate(selectedDate)} ·{" "}
+                  {attachmentsForDay.length
+                    ? `${attachmentsForDay.length} archivo${attachmentsForDay.length === 1 ? "" : "s"}`
+                    : "Sin adjuntos"}
+                </p>
+              </div>
+              <button type="button" onClick={openAttachmentModal}>Adjuntar imagen</button>
+            </div>
+            {attachmentsForDay.length > 0 && (
+              <div className="attachments-list" style={{ marginTop: 12 }}>
+                {attachmentsForDay.map((att) => (
+                  <div key={att.id} className="attachment-row">
+                    <div className="attachment-meta">
+                      <strong>{att.original_filename}</strong>
+                      <span className="muted">
+                        {ATTACHMENT_KIND_LABEL[att.kind] || att.kind} · {formatBytes(att.size_bytes)} · {new Date(att.created_at).toLocaleString("es-ES")}
+                      </span>
+                    </div>
+                    <div className="attachment-actions">
+                      <button type="button" className="secondary btn-sm" onClick={() => viewAttachment(att)}>Ver imagen</button>
+                      <button type="button" className="btn-sm" style={{ background: "#dc2626", color: "#fff" }} onClick={() => deleteAttachment(att)}>Borrar</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="card">
@@ -1058,6 +1411,10 @@ export default function App() {
                 <button type="button" className="secondary btn-sm" onClick={() => setSelectedMonth(currentMonthKey)}>Mes actual</button>
               </div>
             </div>
+            <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+              <button type="button" onClick={exportSalesXlsx} disabled={exporting}>Exportar ventas (Excel)</button>
+              <button type="button" className="secondary" onClick={exportAttachmentsZip} disabled={exporting}>Exportar imágenes (ZIP)</button>
+            </div>
           </div>
 
           <div className="card">
@@ -1077,6 +1434,9 @@ export default function App() {
                 <h2>Gastos mensuales (por categoría)</h2>
                 <button type="button" onClick={() => openMonthlyExpense(null)}>+ Gastos</button>
               </div>
+              <p className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
+                Las categorías fijas se rellenan automáticamente cada mes con el importe de la plantilla. Puedes editarlas aquí solo para este mes.
+              </p>
               <table className="basic-table">
                 <thead>
                   <tr>
@@ -1133,6 +1493,47 @@ export default function App() {
                 </div>
               </div>
             </div>
+          </div>
+
+          <div className="card">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+              <div>
+                <h2>Plantillas de gastos fijos</h2>
+                <p className="muted" style={{ fontSize: 13 }}>
+                  Estas categorías se replican automáticamente en cada mes nuevo con el importe indicado.
+                </p>
+              </div>
+              <button type="button" onClick={() => openRecurringModal(null)}>+ Plantilla</button>
+            </div>
+            <table className="basic-table">
+              <thead>
+                <tr>
+                  <th>Categoría</th>
+                  <th style={{ textAlign: "right" }}>Importe</th>
+                  <th style={{ textAlign: "center" }}>Activa</th>
+                  <th style={{ textAlign: "center" }}>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recurringTemplates.length ? recurringTemplates.map((tpl) => (
+                  <tr key={tpl.id}>
+                    <td><strong>{tpl.category}</strong></td>
+                    <td style={{ textAlign: "right", fontWeight: 700 }}>{money(tpl.amount)}</td>
+                    <td style={{ textAlign: "center" }}>{tpl.active ? "Sí" : "No"}</td>
+                    <td>
+                      <div style={{ display: "flex", justifyContent: "center", gap: 6 }}>
+                        <button type="button" className="secondary btn-sm" onClick={() => openRecurringModal(tpl)}>Editar</button>
+                        <button type="button" className="btn-sm" style={{ background: "#dc2626", color: "#fff" }} onClick={() => deleteRecurringTemplate(tpl)}>Borrar</button>
+                      </div>
+                    </td>
+                  </tr>
+                )) : (
+                  <tr><td colSpan={4} style={{ textAlign: "center", padding: 24 }} className="muted">
+                    No hay plantillas configuradas todavía.
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -1262,7 +1663,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Modal: gestión de gastos del día (lista + añadir/editar/borrar) */}
+      {/* Modal: gestión de gastos del día */}
       {dailyExpensesModalOpen && (
         <div className="modal-backdrop" onClick={closeDailyExpensesModal}>
           <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
@@ -1390,6 +1791,104 @@ export default function App() {
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
                 <button type="button" className="secondary" onClick={closeMonthlyExpense}>Cancelar</button>
                 <button type="button" onClick={submitMonthlyExpense}>Guardar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: plantilla recurrente */}
+      {recurringModal && (
+        <div className="modal-backdrop" onClick={closeRecurringModal}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2>Plantilla de gasto fijo</h2>
+                <p className="muted">Se replicará en cada mes nuevo con el importe indicado.</p>
+              </div>
+              <button type="button" className="secondary btn-sm" onClick={closeRecurringModal}>✕</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-2col">
+                <label>
+                  Categoría
+                  <input
+                    value={recurringModal.category}
+                    onChange={(e) => setRecurringModal((p) => ({ ...p, category: e.target.value }))}
+                    placeholder="Ej. Alquiler"
+                  />
+                </label>
+                <label>
+                  Importe
+                  <input
+                    value={recurringModal.amount}
+                    onChange={(e) => setRecurringModal((p) => ({ ...p, amount: e.target.value.replace(/[^0-9.,]/g, "") }))}
+                    placeholder="0.00"
+                    inputMode="decimal"
+                  />
+                </label>
+              </div>
+              <label className="toggle-label" style={{ marginTop: 12 }}>
+                <input
+                  type="checkbox"
+                  className="toggle-checkbox"
+                  checked={!!recurringModal.active}
+                  onChange={(e) => setRecurringModal((p) => ({ ...p, active: e.target.checked }))}
+                />
+                <span className="toggle-track"><span className="toggle-thumb" /></span>
+                Plantilla activa (se replicará en meses nuevos)
+              </label>
+              {recurringError && <div className="error-box" style={{ marginTop: 10 }}>{recurringError}</div>}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
+                <button type="button" className="secondary" onClick={closeRecurringModal}>Cancelar</button>
+                <button type="button" onClick={submitRecurringModal}>Guardar plantilla</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: subir adjunto */}
+      {attachmentModal && (
+        <div className="modal-backdrop" onClick={closeAttachmentModal}>
+          <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2>Adjuntar imagen</h2>
+                <p className="muted" style={{ textTransform: "capitalize" }}>{formatDate(selectedDate)} · {getWeekdayName(selectedDate)}</p>
+              </div>
+              <button type="button" className="secondary btn-sm" onClick={closeAttachmentModal}>✕</button>
+            </div>
+            <div className="modal-body">
+              <label>
+                Tipo de adjunto
+                <select
+                  value={attachmentModal.kind}
+                  onChange={(e) => setAttachmentModal((p) => ({ ...p, kind: e.target.value }))}
+                >
+                  {ATTACHMENT_KINDS.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
+                </select>
+              </label>
+              <label>
+                Imagen o PDF (máx. 15 MB)
+                <input
+                  type="file"
+                  accept="image/*,application/pdf"
+                  capture="environment"
+                  onChange={(e) => setAttachmentModal((p) => ({ ...p, file: e.target.files?.[0] || null }))}
+                />
+              </label>
+              {attachmentModal.file && (
+                <div className="muted" style={{ fontSize: 12 }}>
+                  {attachmentModal.file.name} · {formatBytes(attachmentModal.file.size)}
+                </div>
+              )}
+              {attachmentError && <div className="error-box" style={{ marginTop: 10 }}>{attachmentError}</div>}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
+                <button type="button" className="secondary" onClick={closeAttachmentModal} disabled={attachmentBusy}>Cancelar</button>
+                <button type="button" onClick={submitAttachment} disabled={attachmentBusy || !attachmentModal.file}>
+                  {attachmentBusy ? "Subiendo..." : "Subir"}
+                </button>
               </div>
             </div>
           </div>

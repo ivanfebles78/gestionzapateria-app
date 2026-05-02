@@ -12,6 +12,7 @@ from app.models import (
     DailyExpense,
     DailySale,
     MonthlyExpense,
+    RecurringExpenseTemplate,
     SaleChangeLog,
     User,
 )
@@ -30,6 +31,8 @@ from app.schemas.sales import (
     MonthlyExpenseUpsert,
     MonthlySummary,
     PaymentMethodShare,
+    RecurringExpenseTemplateRead,
+    RecurringExpenseTemplateUpsert,
     SaleChangeLogRead,
 )
 
@@ -356,8 +359,37 @@ def delete_daily_expense(
     return None
 
 
+def _ensure_recurring_for_month(db: Session, month_key: str) -> None:
+    """Crea filas en monthly_expenses para las plantillas activas que aún no
+    existan en ese mes, usando el importe de la plantilla. No sobreescribe los
+    valores ya guardados (los meses anteriores quedan intactos)."""
+    if not month_key or len(month_key) != 7:
+        return
+    templates = db.query(RecurringExpenseTemplate).filter(RecurringExpenseTemplate.active.is_(True)).all()
+    if not templates:
+        return
+    existing = {
+        row.category
+        for row in db.query(MonthlyExpense.category)
+        .filter(MonthlyExpense.month_key == month_key)
+        .all()
+    }
+    created = False
+    for tpl in templates:
+        if tpl.category in existing:
+            continue
+        db.add(MonthlyExpense(month_key=month_key, category=tpl.category, amount=tpl.amount))
+        created = True
+    if created:
+        db.commit()
+
+
 @router.get('/monthly-expenses', response_model=list[MonthlyExpenseRead])
 def list_monthly_expenses(month_key: str | None = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    if month_key:
+        _ensure_recurring_for_month(db, month_key)
+    else:
+        _ensure_recurring_for_month(db, date.today().strftime('%Y-%m'))
     query = db.query(MonthlyExpense)
     if month_key:
         query = query.filter(MonthlyExpense.month_key == month_key)
@@ -374,6 +406,46 @@ def upsert_monthly_expense(payload: MonthlyExpenseUpsert, db: Session = Depends(
     db.commit()
     db.refresh(expense)
     return expense
+
+
+@router.get('/recurring-expenses', response_model=list[RecurringExpenseTemplateRead])
+def list_recurring_expenses(db: Session = Depends(get_db), user: User = Depends(require_admin)):
+    return db.query(RecurringExpenseTemplate).order_by(RecurringExpenseTemplate.category.asc()).all()
+
+
+@router.put('/recurring-expenses', response_model=RecurringExpenseTemplateRead)
+def upsert_recurring_expense(
+    payload: RecurringExpenseTemplateUpsert,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    tpl = (
+        db.query(RecurringExpenseTemplate)
+        .filter(RecurringExpenseTemplate.category == payload.category)
+        .first()
+    )
+    if not tpl:
+        tpl = RecurringExpenseTemplate(category=payload.category)
+        db.add(tpl)
+    tpl.amount = payload.amount
+    tpl.active = payload.active
+    db.commit()
+    db.refresh(tpl)
+    return tpl
+
+
+@router.delete('/recurring-expenses/{template_id}', status_code=204)
+def delete_recurring_expense(
+    template_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    tpl = db.query(RecurringExpenseTemplate).filter(RecurringExpenseTemplate.id == template_id).first()
+    if not tpl:
+        raise HTTPException(status_code=404, detail='Plantilla no encontrada')
+    db.delete(tpl)
+    db.commit()
+    return None
 
 
 @router.get('/admin/notifications', response_model=list[AdminNotificationRead])

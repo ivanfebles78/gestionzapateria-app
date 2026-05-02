@@ -5,6 +5,8 @@ from app.models.monthly_expense import MonthlyExpense
 from app.models.app_setting import AppSetting
 from app.models.sale_change_log import SaleChangeLog
 from app.models.admin_notification import AdminNotification
+from app.models.recurring_expense_template import RecurringExpenseTemplate
+from app.models.daily_attachment import DailyAttachment
 
 __all__ = [
     'User',
@@ -14,4 +16,6 @@ __all__ = [
     'AppSetting',
     'SaleChangeLog',
     'AdminNotification',
+    'RecurringExpenseTemplate',
+    'DailyAttachment',
 ]

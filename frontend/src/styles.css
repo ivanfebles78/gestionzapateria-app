@@ -437,6 +437,42 @@ h3 { font-size: 14px; font-weight: 700; }
 .logs-table { min-width: 1100px; }
 .logs-table th, .logs-table td { padding: 7px 8px; font-size: 12px; white-space: nowrap; }
 
+/* ── Attachments list ── */
+.attachments-list {
+  display: grid;
+  gap: 8px;
+}
+.attachment-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(2, 6, 23, 0.4);
+  flex-wrap: wrap;
+}
+.attachment-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.attachment-meta strong {
+  word-break: break-all;
+  font-size: 14px;
+}
+.attachment-meta .muted {
+  font-size: 12px;
+}
+.attachment-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 /* ── Responsive ── */
 @media (max-width: 1100px) {
   .stats-grid { grid-template-columns: repeat(2, 1fr); }

@@ -25,6 +25,20 @@ export class ApiError extends Error {
   }
 }
 
+function buildHeaders(options) {
+  const token = getToken();
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
+  const headers = {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(options.headers || {}),
+  };
+  // Solo añadimos JSON content-type si no es FormData ni hay header explícito.
+  if (!isFormData && !headers["Content-Type"] && !headers["content-type"]) {
+    headers["Content-Type"] = "application/json";
+  }
+  return headers;
+}
+
 export async function apiFetch(path, options = {}) {
   if (!API_BASE_URL) {
     throw new ApiError(
@@ -33,12 +47,7 @@ export async function apiFetch(path, options = {}) {
     );
   }
 
-  const token = getToken();
-  const headers = {
-    "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(options.headers || {}),
-  };
+  const headers = buildHeaders(options);
 
   let response;
   try {
@@ -61,6 +70,77 @@ export async function apiFetch(path, options = {}) {
   }
 
   return data;
+}
+
+// Descarga un endpoint como blob (para Excel y ZIP) y dispara el "Save As".
+export async function apiDownload(path, suggestedFilename) {
+  if (!API_BASE_URL) {
+    throw new ApiError("Falta la variable VITE_API_URL en Railway.", 0);
+  }
+  const token = getToken();
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+  let response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, { headers });
+  } catch (err) {
+    throw new ApiError(`No se pudo contactar con el backend (${API_BASE_URL}): ${err.message}`, 0);
+  }
+
+  if (!response.ok) {
+    let message = response.statusText || "Request failed";
+    try {
+      const text = await response.text();
+      const data = text ? JSON.parse(text) : null;
+      if (data?.detail) message = data.detail;
+    } catch {}
+    throw new ApiError(message, response.status);
+  }
+
+  // Intenta extraer el filename del header Content-Disposition.
+  let filename = suggestedFilename || "download";
+  const cd = response.headers.get("Content-Disposition");
+  if (cd) {
+    const match = /filename="?([^"]+)"?/i.exec(cd);
+    if (match?.[1]) filename = match[1];
+  }
+
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// Devuelve la respuesta como Blob (útil para previsualizar imágenes en pestaña nueva).
+export async function apiBlob(path) {
+  if (!API_BASE_URL) {
+    throw new ApiError("Falta la variable VITE_API_URL en Railway.", 0);
+  }
+  const token = getToken();
+  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+  let response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, { headers });
+  } catch (err) {
+    throw new ApiError(`No se pudo contactar con el backend (${API_BASE_URL}): ${err.message}`, 0);
+  }
+
+  if (!response.ok) {
+    let message = response.statusText || "Request failed";
+    try {
+      const text = await response.text();
+      const data = text ? JSON.parse(text) : null;
+      if (data?.detail) message = data.detail;
+    } catch {}
+    throw new ApiError(message, response.status);
+  }
+  return response.blob();
 }
 
 export const API_BASE_URL_VALUE = API_BASE_URL;

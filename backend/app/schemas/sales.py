@@ -238,3 +238,34 @@ class AdminNotificationRead(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class RecurringExpenseTemplateRead(BaseModel):
+    id: int
+    category: str
+    amount: float
+    active: bool
+
+    class Config:
+        from_attributes = True
+
+
+class RecurringExpenseTemplateUpsert(BaseModel):
+    category: str = Field(min_length=1, max_length=100)
+    amount: float = Field(ge=0)
+    active: bool = True
+
+
+class DailyAttachmentRead(BaseModel):
+    id: int
+    sale_date: date
+    kind: str
+    original_filename: str
+    content_type: str
+    size_bytes: int
+    uploaded_by_user_id: int | None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
