@@ -147,16 +147,17 @@ def export_sales_xlsx(
 
     if monthly_rows:
         ws_month = wb.create_sheet('Gastos mensuales')
-        ws_month.append(['Mes', 'Categoría', 'Importe'])
+        ws_month.append(['Mes', 'Categoría', 'Detalle', 'Importe'])
         for cell in ws_month[1]:
             cell.font = header_font
             cell.fill = header_fill
             cell.alignment = header_align
         for row in monthly_rows:
-            ws_month.append([row.month_key, row.category, float(row.amount)])
+            ws_month.append([row.month_key, row.category, getattr(row, 'name', '') or '', float(row.amount)])
         ws_month.column_dimensions['A'].width = 12
-        ws_month.column_dimensions['B'].width = 32
-        ws_month.column_dimensions['C'].width = 14
+        ws_month.column_dimensions['B'].width = 28
+        ws_month.column_dimensions['C'].width = 28
+        ws_month.column_dimensions['D'].width = 14
 
     buffer = io.BytesIO()
     wb.save(buffer)

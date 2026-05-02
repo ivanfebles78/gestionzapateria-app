@@ -2,6 +2,7 @@ from collections import defaultdict
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_current_user, require_admin
@@ -28,6 +29,7 @@ from app.schemas.sales import (
     DailySaleUpsert,
     DashboardStats,
     MonthlyExpenseRead,
+    MonthlyExpenseUpdateById,
     MonthlyExpenseUpsert,
     MonthlySummary,
     PaymentMethodShare,
@@ -361,8 +363,9 @@ def delete_daily_expense(
 
 def _ensure_recurring_for_month(db: Session, month_key: str) -> None:
     """Crea filas en monthly_expenses para las plantillas activas que aún no
-    existan en ese mes, usando el importe de la plantilla. No sobreescribe los
-    valores ya guardados (los meses anteriores quedan intactos)."""
+    existan en ese mes (slot fijo, name=''), usando el importe de la plantilla.
+    No sobreescribe los valores ya guardados ni los pagos a proveedor (que tienen
+    name distinto de '')."""
     if not month_key or len(month_key) != 7:
         return
     templates = db.query(RecurringExpenseTemplate).filter(RecurringExpenseTemplate.active.is_(True)).all()
@@ -371,14 +374,14 @@ def _ensure_recurring_for_month(db: Session, month_key: str) -> None:
     existing = {
         row.category
         for row in db.query(MonthlyExpense.category)
-        .filter(MonthlyExpense.month_key == month_key)
+        .filter(MonthlyExpense.month_key == month_key, MonthlyExpense.name == '')
         .all()
     }
     created = False
     for tpl in templates:
         if tpl.category in existing:
             continue
-        db.add(MonthlyExpense(month_key=month_key, category=tpl.category, amount=tpl.amount))
+        db.add(MonthlyExpense(month_key=month_key, category=tpl.category, name='', amount=tpl.amount))
         created = True
     if created:
         db.commit()
@@ -398,14 +401,66 @@ def list_monthly_expenses(month_key: str | None = None, db: Session = Depends(ge
 
 @router.put('/monthly-expenses', response_model=MonthlyExpenseRead)
 def upsert_monthly_expense(payload: MonthlyExpenseUpsert, db: Session = Depends(get_db), user: User = Depends(require_admin)):
-    expense = db.query(MonthlyExpense).filter(MonthlyExpense.month_key == payload.month_key, MonthlyExpense.category == payload.category).first()
+    name = (payload.name or '').strip()
+    if payload.category == 'Pago a proveedor' and not name:
+        raise HTTPException(status_code=400, detail='Falta el nombre del proveedor')
+    expense = (
+        db.query(MonthlyExpense)
+        .filter(
+            MonthlyExpense.month_key == payload.month_key,
+            MonthlyExpense.category == payload.category,
+            MonthlyExpense.name == name,
+        )
+        .first()
+    )
     if not expense:
-        expense = MonthlyExpense(month_key=payload.month_key, category=payload.category)
+        expense = MonthlyExpense(month_key=payload.month_key, category=payload.category, name=name)
         db.add(expense)
     expense.amount = payload.amount
     db.commit()
     db.refresh(expense)
     return expense
+
+
+@router.put('/monthly-expenses/{expense_id}', response_model=MonthlyExpenseRead)
+def update_monthly_expense_by_id(
+    expense_id: int,
+    payload: MonthlyExpenseUpdateById,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    expense = db.query(MonthlyExpense).filter(MonthlyExpense.id == expense_id).first()
+    if not expense:
+        raise HTTPException(status_code=404, detail='Gasto mensual no encontrado')
+    new_name = (payload.name or '').strip()
+    if expense.category == 'Pago a proveedor' and not new_name:
+        raise HTTPException(status_code=400, detail='Falta el nombre del proveedor')
+    expense.name = new_name
+    expense.amount = payload.amount
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail='Ya existe un gasto con esa categoría y nombre en este mes',
+        )
+    db.refresh(expense)
+    return expense
+
+
+@router.delete('/monthly-expenses/{expense_id}', status_code=204)
+def delete_monthly_expense(
+    expense_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    expense = db.query(MonthlyExpense).filter(MonthlyExpense.id == expense_id).first()
+    if not expense:
+        raise HTTPException(status_code=404, detail='Gasto mensual no encontrado')
+    db.delete(expense)
+    db.commit()
+    return None
 
 
 @router.get('/recurring-expenses', response_model=list[RecurringExpenseTemplateRead])

@@ -133,6 +133,12 @@ class DailySaleRead(BaseModel):
 class MonthlyExpenseUpsert(BaseModel):
     month_key: str
     category: str
+    name: str = ''
+    amount: float = Field(ge=0)
+
+
+class MonthlyExpenseUpdateById(BaseModel):
+    name: str = ''
     amount: float = Field(ge=0)
 
 
@@ -140,6 +146,7 @@ class MonthlyExpenseRead(BaseModel):
     id: int
     month_key: str
     category: str
+    name: str = ''
     amount: float
 
     class Config:

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 import { apiDownload, apiFetch, apiBlob, ApiError, getToken, setToken } from "./lib/api.js";
 
@@ -14,8 +14,11 @@ const expenseCategories = [
   "Empleado 2",
   "Seguridad Social",
   "Asociacion Vecinos Santa Cruz",
+  "Pago a proveedor",
   "Otros",
 ];
+
+const PROVIDER_CATEGORY = "Pago a proveedor";
 
 const PAYMENT_METHODS = [
   { key: "cash", label: "Efectivo" },
@@ -428,6 +431,10 @@ export default function App() {
   const [savingDay, setSavingDay] = useState(false);
   const [dayMessage, setDayMessage] = useState("");
 
+  // Cambios sin guardar en el formulario del día.
+  const [dayDirty, setDayDirty] = useState(false);
+  const [pendingNav, setPendingNav] = useState(null); // { execute: () => void }
+
   const [selectedMonth, setSelectedMonth] = useState(getMonthKey(getTodayKey()));
 
   const [dailyExpensesModalOpen, setDailyExpensesModalOpen] = useState(false);
@@ -439,6 +446,8 @@ export default function App() {
   const [attachmentModal, setAttachmentModal] = useState(null); // null | { kind, file }
   const [attachmentError, setAttachmentError] = useState("");
   const [attachmentBusy, setAttachmentBusy] = useState(false);
+  const cameraInputRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const [recurringModal, setRecurringModal] = useState(null); // null | { id, category, amount, active }
   const [recurringError, setRecurringError] = useState("");
@@ -559,6 +568,7 @@ export default function App() {
     const found = allSales.find((s) => s.sale_date === selectedDate);
     setSelectedSale(found ? saleToLocal(found) : emptyLocalSale(selectedDate));
     setDayMessage("");
+    setDayDirty(false);
     let alive = true;
     (async () => {
       try {
@@ -738,6 +748,54 @@ export default function App() {
     };
   }, [allSales, monthlySalesByMonth, monthlyExpensesByMonth]);
 
+  // ─── Guarda de navegación con cambios sin guardar ───
+  // Aviso del navegador al cerrar pestaña / refrescar.
+  useEffect(() => {
+    if (!dayDirty) return;
+    const handler = (e) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dayDirty]);
+
+  // Cualquier acción de navegación interna pasa por aquí: si hay datos sin
+  // guardar, se queda pendiente y mostramos el modal.
+  const guardedNav = useCallback((action) => {
+    if (dayDirty) {
+      setPendingNav({ execute: action });
+    } else {
+      action();
+    }
+  }, [dayDirty]);
+
+  const cancelPendingNav = () => setPendingNav(null);
+
+  const discardAndContinue = () => {
+    // Reseteamos el formulario a lo que hay en backend.
+    const saved = allSales.find((s) => s.sale_date === selectedDate);
+    setSelectedSale(saved ? saleToLocal(saved) : emptyLocalSale(selectedDate));
+    setDayDirty(false);
+    setDayMessage("");
+    if (pendingNav) {
+      pendingNav.execute();
+      setPendingNav(null);
+    }
+  };
+
+  const saveAndContinue = async () => {
+    const ok = await saveDay();
+    if (ok && pendingNav) {
+      pendingNav.execute();
+      setPendingNav(null);
+    } else if (!ok) {
+      // Error al guardar: cerramos el modal para que el usuario vea el mensaje
+      // de error en la tarjeta del día y pueda corregir.
+      setPendingNav(null);
+    }
+  };
+
   // ─── Acciones ───
   const updateMorningField = (methodKey, value) => {
     const clean = value.replace(/[^0-9.,]/g, "").replace(",", ".");
@@ -745,6 +803,7 @@ export default function App() {
       ...prev,
       morning: { ...prev.morning, [methodKey]: clean },
     }));
+    setDayDirty(true);
   };
 
   const updateClosingField = (methodKey, value) => {
@@ -753,6 +812,7 @@ export default function App() {
       ...prev,
       closing: { ...(prev.closing || emptyShift()), [methodKey]: clean },
     }));
+    setDayDirty(true);
   };
 
   const updateCustomersField = (shift, methodKey, value) => {
@@ -763,12 +823,13 @@ export default function App() {
       ...prev,
       [customersKey]: { ...(prev[customersKey] || emptyCustomers()), [methodKey]: parsed },
     }));
+    setDayDirty(true);
   };
 
   const saveDay = async () => {
     if (hasClosingError) {
       setDayMessage("Error: el cierre no puede ser inferior a la mañana en algún método.");
-      return;
+      return false;
     }
     setSavingDay(true);
     setDayMessage("");
@@ -809,8 +870,11 @@ export default function App() {
         return copy;
       });
       setDayMessage("Guardado correctamente.");
+      setDayDirty(false);
+      return true;
     } catch (err) {
       setDayMessage(`Error al guardar: ${err.message}`);
+      return false;
     } finally {
       setSavingDay(false);
     }
@@ -832,16 +896,20 @@ export default function App() {
   const nextDateCandidate = getNextAllowedDate(selectedDate, 1, extendedSchedule);
   const canGoForward = nextDateCandidate <= maxSelectableDate;
 
-  const goToPreviousAllowedDay = () => setSelectedDate((p) => getNextAllowedDate(p, -1, extendedSchedule));
-  const goToNextAllowedDay = () => {
-    setSelectedDate((p) => {
-      const next = getNextAllowedDate(p, 1, extendedSchedule);
-      return next > maxSelectableDate ? p : next;
+  const goToPreviousAllowedDay = () =>
+    guardedNav(() =>
+      setSelectedDate((p) => getNextAllowedDate(p, -1, extendedSchedule))
+    );
+  const goToNextAllowedDay = () =>
+    guardedNav(() => {
+      setSelectedDate((p) => {
+        const next = getNextAllowedDate(p, 1, extendedSchedule);
+        return next > maxSelectableDate ? p : next;
+      });
     });
-  };
   const handleDateInputChange = (value) => {
     if (!value) return;
-    setSelectedDate(clampToToday(value, extendedSchedule));
+    guardedNav(() => setSelectedDate(clampToToday(value, extendedSchedule)));
   };
 
   // ─── Gastos diarios ───
@@ -933,48 +1001,83 @@ export default function App() {
   // ─── Gastos mensuales ───
   const openMonthlyExpense = (existing) => {
     setMonthlyExpenseModal({
+      id: existing?.id ?? null,
       category: existing?.category || "Otros",
+      name: existing?.name || "",
       amount: existing ? String(existing.amount) : "",
+      error: "",
     });
   };
   const closeMonthlyExpense = () => setMonthlyExpenseModal(null);
   const submitMonthlyExpense = async () => {
     if (!monthlyExpenseModal) return;
     const amount = Number(String(monthlyExpenseModal.amount).replace(",", "."));
-    if (!monthlyExpenseModal.category || !Number.isFinite(amount) || amount < 0) return;
+    if (!monthlyExpenseModal.category || !Number.isFinite(amount) || amount < 0) {
+      setMonthlyExpenseModal((p) => ({ ...p, error: "Importe inválido." }));
+      return;
+    }
+    const isProvider = monthlyExpenseModal.category === PROVIDER_CATEGORY;
+    const name = isProvider ? (monthlyExpenseModal.name || "").trim() : "";
+    if (isProvider && !name) {
+      setMonthlyExpenseModal((p) => ({ ...p, error: "Indica el nombre del proveedor." }));
+      return;
+    }
     try {
-      const updated = await apiFetch("/api/monthly-expenses", {
-        method: "PUT",
-        body: JSON.stringify({
-          month_key: selectedMonth,
-          category: monthlyExpenseModal.category,
-          amount,
-        }),
-      });
+      let updated;
+      if (monthlyExpenseModal.id) {
+        // Edición: PUT por id (no cambia categoría, sí name e importe).
+        updated = await apiFetch(`/api/monthly-expenses/${monthlyExpenseModal.id}`, {
+          method: "PUT",
+          body: JSON.stringify({ name, amount }),
+        });
+      } else {
+        updated = await apiFetch("/api/monthly-expenses", {
+          method: "PUT",
+          body: JSON.stringify({
+            month_key: selectedMonth,
+            category: monthlyExpenseModal.category,
+            name,
+            amount,
+          }),
+        });
+      }
       setMonthlyExpenses((prev) => {
-        const idx = prev.findIndex((e) => e.month_key === updated.month_key && e.category === updated.category);
+        const idx = prev.findIndex((e) => e.id === updated.id);
         if (idx === -1) return [...prev, updated];
         const copy = prev.slice(); copy[idx] = updated; return copy;
       });
       closeMonthlyExpense();
     } catch (err) {
-      setGlobalError(err.message);
+      setMonthlyExpenseModal((p) => ({ ...p, error: err.message || "Error al guardar" }));
     }
   };
+  const isFixedSlot = (entry) => {
+    if (entry.name) return false;
+    return recurringTemplates.some((t) => t.active && t.category === entry.category);
+  };
   const deleteMonthlyExpense = async (existing) => {
-    if (!confirm(`¿Quitar el gasto "${existing.category}" del mes? (se pone a 0)`)) return;
+    const fixed = isFixedSlot(existing);
+    const label = existing.name ? `${existing.category} · ${existing.name}` : existing.category;
+    const confirmMsg = fixed
+      ? `¿Quitar el gasto "${label}" del mes? (se pone a 0; al recargar se volverá a sembrar con el importe de la plantilla)`
+      : `¿Borrar el gasto "${label}" del mes?`;
+    if (!confirm(confirmMsg)) return;
     try {
-      const updated = await apiFetch("/api/monthly-expenses", {
-        method: "PUT",
-        body: JSON.stringify({
-          month_key: existing.month_key,
-          category: existing.category,
-          amount: 0,
-        }),
-      });
-      setMonthlyExpenses((prev) => prev.map((e) =>
-        e.month_key === updated.month_key && e.category === updated.category ? updated : e
-      ));
+      if (fixed) {
+        const updated = await apiFetch("/api/monthly-expenses", {
+          method: "PUT",
+          body: JSON.stringify({
+            month_key: existing.month_key,
+            category: existing.category,
+            name: "",
+            amount: 0,
+          }),
+        });
+        setMonthlyExpenses((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+      } else {
+        await apiFetch(`/api/monthly-expenses/${existing.id}`, { method: "DELETE" });
+        setMonthlyExpenses((prev) => prev.filter((e) => e.id !== existing.id));
+      }
     } catch (err) {
       setGlobalError(err.message);
     }
@@ -1113,7 +1216,7 @@ export default function App() {
     }
   };
 
-  const logout = () => {
+  const performLogout = () => {
     setToken(null);
     setCurrentUser(null);
     setAllSales([]);
@@ -1121,7 +1224,9 @@ export default function App() {
     setDailyExpensesForDay([]);
     setAttachmentsForDay([]);
     setRecurringTemplates([]);
+    setDayDirty(false);
   };
+  const logout = () => guardedNav(performLogout);
 
   // ─── Render ───
   if (authChecking) {
@@ -1171,15 +1276,15 @@ export default function App() {
       </div>
 
       <div className="tabs">
-        <button className={tab === "day" ? "active" : ""} onClick={() => setTab("day")}>Resumen diario</button>
+        <button className={tab === "day" ? "active" : ""} onClick={() => guardedNav(() => setTab("day"))}>Resumen diario</button>
         {currentUser.role === "admin" && (
-          <button className={tab === "month" ? "active" : ""} onClick={() => setTab("month")}>Resumen mensual</button>
+          <button className={tab === "month" ? "active" : ""} onClick={() => guardedNav(() => setTab("month"))}>Resumen mensual</button>
         )}
         {currentUser.role === "admin" && (
-          <button className={tab === "stats" ? "active" : ""} onClick={() => setTab("stats")}>Estadísticas</button>
+          <button className={tab === "stats" ? "active" : ""} onClick={() => guardedNav(() => setTab("stats"))}>Estadísticas</button>
         )}
         {currentUser.role === "admin" && (
-          <button className={tab === "logs" ? "active" : ""} onClick={() => setTab("logs")}>Registro de actividad</button>
+          <button className={tab === "logs" ? "active" : ""} onClick={() => guardedNav(() => setTab("logs"))}>Registro de actividad</button>
         )}
       </div>
 
@@ -1218,9 +1323,9 @@ export default function App() {
                 style={{ flex: "0 0 auto", width: 160 }}
               />
               <button type="button" className="secondary nav-btn" onClick={goToNextAllowedDay} disabled={!canGoForward} title={canGoForward ? "" : "No se pueden ver días futuros"}>›</button>
-              <button type="button" className="secondary btn-sm" onClick={() => setSelectedDate(clampToToday(todayKey, extendedSchedule))}>Hoy</button>
-              <button type="button" className="secondary btn-sm" onClick={() => setSelectedDate(clampToToday(addDays(todayKey, -7), extendedSchedule))}>-7d</button>
-              <button type="button" className="secondary btn-sm" onClick={() => setSelectedDate(clampToToday(addDays(todayKey, -14), extendedSchedule))}>-14d</button>
+              <button type="button" className="secondary btn-sm" onClick={() => guardedNav(() => setSelectedDate(clampToToday(todayKey, extendedSchedule)))}>Hoy</button>
+              <button type="button" className="secondary btn-sm" onClick={() => guardedNav(() => setSelectedDate(clampToToday(addDays(todayKey, -7), extendedSchedule)))}>-7d</button>
+              <button type="button" className="secondary btn-sm" onClick={() => guardedNav(() => setSelectedDate(clampToToday(addDays(todayKey, -14), extendedSchedule)))}>-14d</button>
             </div>
 
             {!extendedSchedule && (
@@ -1366,7 +1471,7 @@ export default function App() {
                   {historyDesc.length ? historyDesc.map((s) => {
                     const balanceClass = num(s.daily_balance) >= 0 ? "balance-positive" : "balance-negative";
                     return (
-                      <tr key={s.sale_date} onClick={() => setSelectedDate(s.sale_date)} style={{ cursor: "pointer" }}>
+                      <tr key={s.sale_date} onClick={() => guardedNav(() => setSelectedDate(s.sale_date))} style={{ cursor: "pointer" }}>
                         <td className="date-col">{formatDate(s.sale_date)}</td>
                         <td style={{ textTransform: "capitalize" }}>{getWeekdayName(s.sale_date)}</td>
                         <td className="morning-col">{money(s.morning_cash)}</td>
@@ -1447,8 +1552,11 @@ export default function App() {
                 </thead>
                 <tbody>
                   {viewedMonthExpenses.length ? viewedMonthExpenses.map((e) => (
-                    <tr key={`${e.month_key}-${e.category}`}>
-                      <td><strong>{e.category}</strong></td>
+                    <tr key={e.id}>
+                      <td>
+                        <strong>{e.category}</strong>
+                        {e.name ? <span className="muted" style={{ marginLeft: 6 }}>· {e.name}</span> : null}
+                      </td>
                       <td style={{ textAlign: "right", fontWeight: 700 }}>{money(e.amount)}</td>
                       <td>
                         <div style={{ display: "flex", justifyContent: "center", gap: 6 }}>
@@ -1762,7 +1870,7 @@ export default function App() {
           <div className="modal-panel" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <div>
-                <h2>Gasto mensual</h2>
+                <h2>{monthlyExpenseModal.id ? "Editar gasto mensual" : "Nuevo gasto mensual"}</h2>
                 <p className="muted" style={{ textTransform: "capitalize" }}>{getMonthLabel(selectedMonth)}</p>
               </div>
               <button type="button" className="secondary btn-sm" onClick={closeMonthlyExpense}>✕</button>
@@ -1773,7 +1881,8 @@ export default function App() {
                   Categoría
                   <select
                     value={monthlyExpenseModal.category}
-                    onChange={(e) => setMonthlyExpenseModal((p) => ({ ...p, category: e.target.value }))}
+                    onChange={(e) => setMonthlyExpenseModal((p) => ({ ...p, category: e.target.value, error: "" }))}
+                    disabled={!!monthlyExpenseModal.id}
                   >
                     {expenseCategories.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
@@ -1782,12 +1891,28 @@ export default function App() {
                   Importe
                   <input
                     value={monthlyExpenseModal.amount}
-                    onChange={(e) => setMonthlyExpenseModal((p) => ({ ...p, amount: e.target.value.replace(/[^0-9.,]/g, "") }))}
+                    onChange={(e) => setMonthlyExpenseModal((p) => ({ ...p, amount: e.target.value.replace(/[^0-9.,]/g, ""), error: "" }))}
                     placeholder="0.00"
                     inputMode="decimal"
                   />
                 </label>
               </div>
+              {monthlyExpenseModal.category === PROVIDER_CATEGORY && (
+                <label style={{ marginTop: 12 }}>
+                  Nombre del proveedor
+                  <input
+                    value={monthlyExpenseModal.name || ""}
+                    onChange={(e) => setMonthlyExpenseModal((p) => ({ ...p, name: e.target.value, error: "" }))}
+                    placeholder="Ej. Acme S.L."
+                  />
+                  <span className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+                    Puedes registrar varios pagos a proveedor en el mismo mes; cada uno necesita un nombre distinto.
+                  </span>
+                </label>
+              )}
+              {monthlyExpenseModal.error && (
+                <div className="error-box" style={{ marginTop: 10 }}>{monthlyExpenseModal.error}</div>
+              )}
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
                 <button type="button" className="secondary" onClick={closeMonthlyExpense}>Cancelar</button>
                 <button type="button" onClick={submitMonthlyExpense}>Guardar</button>
@@ -1848,6 +1973,45 @@ export default function App() {
         </div>
       )}
 
+      {/* Modal: cambios sin guardar */}
+      {pendingNav && (
+        <div className="modal-backdrop" onClick={cancelPendingNav}>
+          <div className="modal-panel" style={{ width: "min(480px, 96vw)" }} onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2>Cambios sin guardar</h2>
+                <p className="muted">Tienes datos del día sin guardar. ¿Qué quieres hacer?</p>
+              </div>
+            </div>
+            <div className="modal-body">
+              <p style={{ fontSize: 14 }}>
+                Si continúas sin guardar, los cambios introducidos en {formatDate(selectedDate)} se perderán.
+              </p>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, flexWrap: "wrap" }}>
+                <button type="button" className="secondary" onClick={cancelPendingNav} disabled={savingDay}>Cancelar</button>
+                <button
+                  type="button"
+                  className="secondary"
+                  style={{ background: "#7f1d1d", color: "#fff", borderColor: "#7f1d1d" }}
+                  onClick={discardAndContinue}
+                  disabled={savingDay}
+                >
+                  Descartar y continuar
+                </button>
+                <button type="button" onClick={saveAndContinue} disabled={savingDay || hasClosingError}>
+                  {savingDay ? "Guardando..." : "Guardar y continuar"}
+                </button>
+              </div>
+              {hasClosingError && (
+                <div className="error-box" style={{ marginTop: 8 }}>
+                  No se puede guardar: el cierre es inferior a la mañana en algún método. Revisa los datos o descarta los cambios.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal: subir adjunto */}
       {attachmentModal && (
         <div className="modal-backdrop" onClick={closeAttachmentModal}>
@@ -1869,18 +2033,42 @@ export default function App() {
                   {ATTACHMENT_KINDS.map((k) => <option key={k.key} value={k.key}>{k.label}</option>)}
                 </select>
               </label>
-              <label>
-                Imagen o PDF (máx. 15 MB)
+              <div>
+                <span style={{ fontSize: 13, color: "var(--muted)", fontWeight: 500 }}>
+                  Imagen o PDF (máx. 15 MB)
+                </span>
+                {/* Inputs ocultos: la cámara fuerza la captura en móvil; el otro
+                    abre el selector de archivos normal (galería o disco). */}
                 <input
+                  ref={cameraInputRef}
                   type="file"
-                  accept="image/*,application/pdf"
+                  accept="image/*"
                   capture="environment"
+                  style={{ display: "none" }}
                   onChange={(e) => setAttachmentModal((p) => ({ ...p, file: e.target.files?.[0] || null }))}
                 />
-              </label>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*,application/pdf"
+                  style={{ display: "none" }}
+                  onChange={(e) => setAttachmentModal((p) => ({ ...p, file: e.target.files?.[0] || null }))}
+                />
+                <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+                  <button type="button" onClick={() => cameraInputRef.current?.click()}>
+                    Hacer foto
+                  </button>
+                  <button type="button" className="secondary" onClick={() => fileInputRef.current?.click()}>
+                    Elegir archivo
+                  </button>
+                </div>
+                <p className="muted" style={{ fontSize: 11, marginTop: 6 }}>
+                  En móvil, "Hacer foto" abre la cámara directamente. En ordenador abre el selector de archivos.
+                </p>
+              </div>
               {attachmentModal.file && (
                 <div className="muted" style={{ fontSize: 12 }}>
-                  {attachmentModal.file.name} · {formatBytes(attachmentModal.file.size)}
+                  Seleccionado: <strong>{attachmentModal.file.name}</strong> · {formatBytes(attachmentModal.file.size)}
                 </div>
               )}
               {attachmentError && <div className="error-box" style={{ marginTop: 10 }}>{attachmentError}</div>}
