@@ -1245,6 +1245,17 @@ export default function App() {
   };
   const logout = () => guardedNav(performLogout);
 
+  // Lista de meses disponibles para el filtro del histórico. Debe declararse
+  // antes de los early returns para no romper el orden de hooks de React.
+  const availableHistoryMonths = useMemo(() => {
+    const set = new Set();
+    for (const s of allSales) {
+      if (!extendedSchedule && isSunday(s.sale_date)) continue;
+      set.add(getMonthKey(s.sale_date));
+    }
+    return Array.from(set).sort((a, b) => b.localeCompare(a));
+  }, [allSales, extendedSchedule]);
+
   // ─── Render ───
   if (authChecking) {
     return <div className="center-screen"><div className="muted">Cargando...</div></div>;
@@ -1256,15 +1267,6 @@ export default function App() {
 
   const dailyProgress = Math.min((selectedDayTotal / DAILY_TARGET) * 100, 100);
   const monthlyProgress = Math.min((viewedMonthSales / MONTHLY_TARGET) * 100, 100);
-
-  const availableHistoryMonths = useMemo(() => {
-    const set = new Set();
-    for (const s of allSales) {
-      if (!extendedSchedule && isSunday(s.sale_date)) continue;
-      set.add(getMonthKey(s.sale_date));
-    }
-    return Array.from(set).sort((a, b) => b.localeCompare(a));
-  }, [allSales, extendedSchedule]);
 
   const historyDesc = [...allSales]
     .filter((s) => extendedSchedule || !isSunday(s.sale_date))
