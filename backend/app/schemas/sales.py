@@ -51,6 +51,7 @@ class DailySaleUpsert(BaseModel):
 
     worked: bool = True
     extended_schedule: bool = False
+    is_holiday: bool = False
 
     @computed_field
     @property
@@ -125,6 +126,7 @@ class DailySaleRead(BaseModel):
     worked: bool
     extended_schedule: bool
     is_locked: bool
+    is_holiday: bool = False
 
     class Config:
         from_attributes = True

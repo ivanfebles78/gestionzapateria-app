@@ -178,26 +178,31 @@ def upsert_daily_sale(payload: DailySaleUpsert, db: Session = Depends(get_db), u
         sale = DailySale(sale_date=payload.sale_date)
         db.add(sale)
 
-    sale.morning_cash = payload.morning_cash
-    sale.morning_card = payload.morning_card
-    sale.morning_bizum = payload.morning_bizum
-    sale.morning_bonos = payload.morning_bonos
-    sale.morning_cash_customers = payload.morning_cash_customers
-    sale.morning_card_customers = payload.morning_card_customers
-    sale.morning_bizum_customers = payload.morning_bizum_customers
-    sale.morning_bonos_customers = payload.morning_bonos_customers
+    # Si el día se marca como festivo, forzamos los importes y clientes a 0
+    # para que el balance, las stats y el histórico reflejen "no abre".
+    is_holiday = bool(payload.is_holiday)
 
-    sale.afternoon_cash = payload.afternoon_cash
-    sale.afternoon_card = payload.afternoon_card
-    sale.afternoon_bizum = payload.afternoon_bizum
-    sale.afternoon_bonos = payload.afternoon_bonos
-    sale.afternoon_cash_customers = payload.afternoon_cash_customers
-    sale.afternoon_card_customers = payload.afternoon_card_customers
-    sale.afternoon_bizum_customers = payload.afternoon_bizum_customers
-    sale.afternoon_bonos_customers = payload.afternoon_bonos_customers
+    sale.morning_cash = 0 if is_holiday else payload.morning_cash
+    sale.morning_card = 0 if is_holiday else payload.morning_card
+    sale.morning_bizum = 0 if is_holiday else payload.morning_bizum
+    sale.morning_bonos = 0 if is_holiday else payload.morning_bonos
+    sale.morning_cash_customers = 0 if is_holiday else payload.morning_cash_customers
+    sale.morning_card_customers = 0 if is_holiday else payload.morning_card_customers
+    sale.morning_bizum_customers = 0 if is_holiday else payload.morning_bizum_customers
+    sale.morning_bonos_customers = 0 if is_holiday else payload.morning_bonos_customers
 
-    sale.worked = payload.worked
+    sale.afternoon_cash = 0 if is_holiday else payload.afternoon_cash
+    sale.afternoon_card = 0 if is_holiday else payload.afternoon_card
+    sale.afternoon_bizum = 0 if is_holiday else payload.afternoon_bizum
+    sale.afternoon_bonos = 0 if is_holiday else payload.afternoon_bonos
+    sale.afternoon_cash_customers = 0 if is_holiday else payload.afternoon_cash_customers
+    sale.afternoon_card_customers = 0 if is_holiday else payload.afternoon_card_customers
+    sale.afternoon_bizum_customers = 0 if is_holiday else payload.afternoon_bizum_customers
+    sale.afternoon_bonos_customers = 0 if is_holiday else payload.afternoon_bonos_customers
+
+    sale.worked = False if is_holiday else payload.worked
     sale.extended_schedule = payload.extended_schedule
+    sale.is_holiday = is_holiday
     sale.updated_by_user_id = user.id
     sale.is_locked = True
 
@@ -548,6 +553,8 @@ def dashboard_stats(db: Session = Depends(get_db), user: User = Depends(get_curr
     traffic = defaultdict(int)
 
     for sale in daily_sales:
+        if sale.is_holiday:
+            continue
         month_key = sale.sale_date.strftime('%Y-%m')
         monthly_sales_map[month_key] += sale.total_sales
 
@@ -632,8 +639,9 @@ def dashboard_stats(db: Session = Depends(get_db), user: User = Depends(get_curr
     best_weekday = max(sorted_weekdays, key=lambda w: weekday_totals[w], default='—')
     worst_weekday = min(sorted_weekdays, key=lambda w: weekday_totals[w], default='—')
 
+    non_holiday_count = sum(1 for s in daily_sales if not s.is_holiday)
     return DashboardStats(
-        daily_target_rate=int(round((daily_target_hits / len(daily_sales)) * 100)) if daily_sales else 0,
+        daily_target_rate=int(round((daily_target_hits / non_holiday_count) * 100)) if non_holiday_count else 0,
         monthly_target_rate=int(round((monthly_hits / len(month_keys)) * 100)) if month_keys else 0,
         best_weekday=best_weekday,
         worst_weekday=worst_weekday,

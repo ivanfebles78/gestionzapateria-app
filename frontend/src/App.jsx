@@ -189,6 +189,7 @@ function saleToLocal(sale) {
     },
     worked: sale.worked ?? true,
     extended_schedule: sale.extended_schedule ?? false,
+    is_holiday: !!sale.is_holiday,
     total_sales: num(sale.total_sales),
     morning_total: num(sale.morning_total),
     afternoon_total: num(sale.afternoon_total),
@@ -207,6 +208,7 @@ function emptyLocalSale(dateStr) {
     afternoon_customers: emptyCustomers(),
     worked: !isSunday(dateStr),
     extended_schedule: false,
+    is_holiday: false,
     total_sales: 0,
     morning_total: 0,
     afternoon_total: 0,
@@ -435,6 +437,9 @@ export default function App() {
   const [dayDirty, setDayDirty] = useState(false);
   const [pendingNav, setPendingNav] = useState(null); // { execute: () => void }
 
+  // Filtro del histórico por mes ("" = todos).
+  const [historyMonthFilter, setHistoryMonthFilter] = useState("");
+
   const [selectedMonth, setSelectedMonth] = useState(getMonthKey(getTodayKey()));
 
   const [dailyExpensesModalOpen, setDailyExpensesModalOpen] = useState(false);
@@ -591,8 +596,14 @@ export default function App() {
 
   const isSelectedDateSaturday = isSaturday(selectedDate);
   const isSelectedDateSunday = isSunday(selectedDate);
-  const isAfternoonDisabled = !extendedSchedule && isSelectedDateSaturday;
-  const isDateClosed = !extendedSchedule && isSelectedDateSunday;
+  const isHolidayMarked = !!selectedSale.is_holiday;
+  const isSundayClosed = !extendedSchedule && isSelectedDateSunday;
+  const isAfternoonDisabled = (!extendedSchedule && isSelectedDateSaturday) || isHolidayMarked;
+  // isDateClosed deshabilita los inputs del formulario.
+  const isDateClosed = isSundayClosed || isHolidayMarked;
+  // En domingo cerrado no permitimos guardar (no hay registro de ventas posible).
+  // En festivo SÍ permitimos guardar (queremos persistir la marca de festivo).
+  const canSaveDay = !isSundayClosed;
 
   const morningTotal = shiftAmountTotal(selectedSale.morning);
 
@@ -826,6 +837,11 @@ export default function App() {
     setDayDirty(true);
   };
 
+  const updateHolidayFlag = (checked) => {
+    setSelectedSale((prev) => ({ ...prev, is_holiday: checked }));
+    setDayDirty(true);
+  };
+
   const saveDay = async () => {
     if (hasClosingError) {
       setDayMessage("Error: el cierre no puede ser inferior a la mañana en algún método.");
@@ -855,8 +871,9 @@ export default function App() {
         afternoon_card_customers: selectedSale.afternoon_customers.card || 0,
         afternoon_bizum_customers: selectedSale.afternoon_customers.bizum || 0,
         afternoon_bonos_customers: selectedSale.afternoon_customers.bonos || 0,
-        worked: !isDateClosed,
+        worked: !isDateClosed && !selectedSale.is_holiday,
         extended_schedule: extendedSchedule,
+        is_holiday: !!selectedSale.is_holiday,
       };
       const updated = await apiFetch("/api/daily-sales", {
         method: "PUT",
@@ -1240,8 +1257,18 @@ export default function App() {
   const dailyProgress = Math.min((selectedDayTotal / DAILY_TARGET) * 100, 100);
   const monthlyProgress = Math.min((viewedMonthSales / MONTHLY_TARGET) * 100, 100);
 
+  const availableHistoryMonths = useMemo(() => {
+    const set = new Set();
+    for (const s of allSales) {
+      if (!extendedSchedule && isSunday(s.sale_date)) continue;
+      set.add(getMonthKey(s.sale_date));
+    }
+    return Array.from(set).sort((a, b) => b.localeCompare(a));
+  }, [allSales, extendedSchedule]);
+
   const historyDesc = [...allSales]
     .filter((s) => extendedSchedule || !isSunday(s.sale_date))
+    .filter((s) => !historyMonthFilter || getMonthKey(s.sale_date) === historyMonthFilter)
     .sort((a, b) => b.sale_date.localeCompare(a.sale_date));
 
   return (
@@ -1333,8 +1360,28 @@ export default function App() {
                 Horario normal: domingos omitidos y sábados tarde deshabilitada.
               </div>
             )}
-            {isDateClosed && (
+            {isSundayClosed && (
               <div className="error-box" style={{ marginTop: 12 }}>Este día está cerrado en horario normal.</div>
+            )}
+
+            {!isSundayClosed && (
+              <div className="section-block" style={{ marginTop: 14 }}>
+                <label className="toggle-label">
+                  <input
+                    type="checkbox"
+                    className="toggle-checkbox"
+                    checked={isHolidayMarked}
+                    onChange={(e) => updateHolidayFlag(e.target.checked)}
+                  />
+                  <span className="toggle-track"><span className="toggle-thumb" /></span>
+                  Festivo (no se registran ventas este día)
+                </label>
+              </div>
+            )}
+            {isHolidayMarked && (
+              <div className="success-box" style={{ marginTop: 8, background: "rgba(168,85,247,0.12)", color: "#d8b4fe", borderColor: "rgba(168,85,247,0.25)" }}>
+                Día marcado como festivo. Al guardar se almacenarán los importes a 0 y se excluirá de las estadísticas.
+              </div>
             )}
 
             <div className="form-2col" style={{ marginTop: 16 }}>
@@ -1371,7 +1418,7 @@ export default function App() {
             </div>
 
             <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 16, flexWrap: "wrap" }}>
-              <button type="button" onClick={saveDay} disabled={savingDay || isDateClosed || hasClosingError}>
+              <button type="button" onClick={saveDay} disabled={savingDay || !canSaveDay || hasClosingError}>
                 {savingDay ? "Guardando..." : "Guardar día"}
               </button>
               {hasClosingError && (
@@ -1440,8 +1487,28 @@ export default function App() {
           </div>
 
           <div className="card">
-            <h2>Histórico</h2>
-            <p className="muted">Todos los días registrados (ordenados de más reciente a más antiguo).</p>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 12 }}>
+              <div>
+                <h2>Histórico</h2>
+                <p className="muted">
+                  {historyMonthFilter
+                    ? `${getMonthLabel(historyMonthFilter)} · ${historyDesc.length} día${historyDesc.length === 1 ? "" : "s"}`
+                    : `Todos los días registrados · ${historyDesc.length} día${historyDesc.length === 1 ? "" : "s"}`}
+                </p>
+              </div>
+              <label style={{ minWidth: 200 }}>
+                Filtrar por mes
+                <select
+                  value={historyMonthFilter}
+                  onChange={(e) => setHistoryMonthFilter(e.target.value)}
+                >
+                  <option value="">Todos los meses</option>
+                  {availableHistoryMonths.map((mk) => (
+                    <option key={mk} value={mk} style={{ textTransform: "capitalize" }}>{getMonthLabel(mk)}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
             <div style={{ maxHeight: 420, overflowY: "auto", marginTop: 8 }}>
               <table className="sales-table">
                 <thead>
@@ -1471,9 +1538,12 @@ export default function App() {
                   {historyDesc.length ? historyDesc.map((s) => {
                     const balanceClass = num(s.daily_balance) >= 0 ? "balance-positive" : "balance-negative";
                     return (
-                      <tr key={s.sale_date} onClick={() => guardedNav(() => setSelectedDate(s.sale_date))} style={{ cursor: "pointer" }}>
+                      <tr key={s.sale_date} onClick={() => guardedNav(() => setSelectedDate(s.sale_date))} style={{ cursor: "pointer", opacity: s.is_holiday ? 0.55 : 1 }}>
                         <td className="date-col">{formatDate(s.sale_date)}</td>
-                        <td style={{ textTransform: "capitalize" }}>{getWeekdayName(s.sale_date)}</td>
+                        <td style={{ textTransform: "capitalize" }}>
+                          {getWeekdayName(s.sale_date)}
+                          {s.is_holiday && <span className="holiday-chip">Festivo</span>}
+                        </td>
                         <td className="morning-col">{money(s.morning_cash)}</td>
                         <td className="morning-col">{money(s.morning_card)}</td>
                         <td className="morning-col">{money(s.morning_bizum)}</td>

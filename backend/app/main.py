@@ -29,6 +29,13 @@ def _apply_postgres_migrations(connectable) -> None:
     """Migraciones idempotentes para Postgres. Las ejecutamos al arrancar para
     no depender de Alembic en este proyecto pequeño."""
     with connectable.begin() as conn:
+        # daily_sales: añadir columna is_holiday.
+        conn.execute(text(
+            "ALTER TABLE daily_sales ADD COLUMN IF NOT EXISTS is_holiday BOOLEAN DEFAULT FALSE"
+        ))
+        conn.execute(text(
+            "UPDATE daily_sales SET is_holiday = FALSE WHERE is_holiday IS NULL"
+        ))
         # monthly_expenses: añadir columna name y reemplazar la UQ.
         conn.execute(text(
             "ALTER TABLE monthly_expenses ADD COLUMN IF NOT EXISTS name VARCHAR(150) DEFAULT ''"
