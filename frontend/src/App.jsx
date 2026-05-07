@@ -361,7 +361,7 @@ const LOGIN_OPTIONS = [
   { username: "Ivan", label: "Iván" },
   { username: "Claudia", label: "Claudia" },
   { username: "Tienda", label: "Tienda" },
-  { username: "Asesor", label: "Asesor" },
+  { username: "asesor", label: "Asesor" },
 ];
 
 function LoginScreen({ onLoggedIn }) {
@@ -425,6 +425,7 @@ function LoginScreen({ onLoggedIn }) {
 // ─────────────────────────────────────────────────
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
+  const isReadOnly = ["viewer", "readonly", "read_only", "asesor"].includes((currentUser?.role || "").toLowerCase());
   const [authChecking, setAuthChecking] = useState(true);
   const [globalError, setGlobalError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -608,12 +609,12 @@ export default function App() {
   const isSelectedDateSunday = isSunday(selectedDate);
   const isHolidayMarked = !!selectedSale.is_holiday;
   const isSundayClosed = !extendedSchedule && isSelectedDateSunday;
-  const isAfternoonDisabled = (!extendedSchedule && isSelectedDateSaturday) || isHolidayMarked;
+  const isAfternoonDisabled = isReadOnly || (!extendedSchedule && isSelectedDateSaturday) || isHolidayMarked;
   // isDateClosed deshabilita los inputs del formulario.
-  const isDateClosed = isSundayClosed || isHolidayMarked;
+  const isDateClosed = isReadOnly || isSundayClosed || isHolidayMarked;
   // En domingo cerrado no permitimos guardar (no hay registro de ventas posible).
   // En festivo SÍ permitimos guardar (queremos persistir la marca de festivo).
-  const canSaveDay = !isSundayClosed;
+  const canSaveDay = !isReadOnly && !isSundayClosed;
 
   const morningTotal = shiftAmountTotal(selectedSale.morning);
 
@@ -853,6 +854,7 @@ export default function App() {
   };
 
   const saveDay = async () => {
+    if (isReadOnly) return;
     if (hasClosingError) {
       setDayMessage("Error: el cierre no puede ser inferior a la mañana en algún método.");
       return false;
@@ -983,6 +985,7 @@ export default function App() {
   };
 
   const submitDailyExpenseDraft = async () => {
+    if (isReadOnly) return;
     const concept = dailyExpenseDraft.concept.trim();
     const amount = Number(String(dailyExpenseDraft.amount).replace(",", "."));
     if (!concept || !Number.isFinite(amount) || amount < 0) {
@@ -1012,6 +1015,7 @@ export default function App() {
   };
 
   const deleteDailyExpense = async (id) => {
+    if (isReadOnly) return;
     if (!confirm("¿Borrar este gasto?")) return;
     try {
       await apiFetch(`/api/daily-expenses/${id}`, { method: "DELETE" });
@@ -1037,6 +1041,7 @@ export default function App() {
   };
   const closeMonthlyExpense = () => setMonthlyExpenseModal(null);
   const submitMonthlyExpense = async () => {
+    if (isReadOnly) return;
     if (!monthlyExpenseModal) return;
     const amount = Number(String(monthlyExpenseModal.amount).replace(",", "."));
     if (!monthlyExpenseModal.category || !Number.isFinite(amount) || amount < 0) {
@@ -1083,6 +1088,7 @@ export default function App() {
     return recurringTemplates.some((t) => t.active && t.category === entry.category);
   };
   const deleteMonthlyExpense = async (existing) => {
+    if (isReadOnly) return;
     const fixed = isFixedSlot(existing);
     const label = existing.name ? `${existing.category} · ${existing.name}` : existing.category;
     const confirmMsg = fixed
@@ -1125,6 +1131,7 @@ export default function App() {
     setRecurringError("");
   };
   const submitRecurringModal = async () => {
+    if (isReadOnly) return;
     if (!recurringModal) return;
     const category = (recurringModal.category || "").trim();
     const amount = Number(String(recurringModal.amount).replace(",", "."));
@@ -1148,6 +1155,7 @@ export default function App() {
     }
   };
   const deleteRecurringTemplate = async (tpl) => {
+    if (isReadOnly) return;
     if (!confirm(`¿Borrar la plantilla "${tpl.category}"? Los meses ya guardados no se tocan.`)) return;
     try {
       await apiFetch(`/api/recurring-expenses/${tpl.id}`, { method: "DELETE" });
@@ -1168,6 +1176,7 @@ export default function App() {
     setAttachmentBusy(false);
   };
   const submitAttachment = async () => {
+    if (isReadOnly) return;
     if (!attachmentModal?.file) {
       setAttachmentError("Selecciona o haz una foto.");
       return;
@@ -1189,6 +1198,7 @@ export default function App() {
     }
   };
   const deleteAttachment = async (att) => {
+    if (isReadOnly) return;
     if (!confirm(`¿Borrar el adjunto "${att.original_filename}"?`)) return;
     try {
       await apiFetch(`/api/daily-attachments/${att.id}`, { method: "DELETE" });
@@ -1294,7 +1304,7 @@ export default function App() {
           </div>
         </div>
         <div className="topbar-actions">
-          <span className="kpi-label">{currentUser.role === "admin" ? "Administrador" : "Tienda"}</span>
+          <span className="kpi-label">{currentUser.role === "admin" ? "Administrador" : isReadOnly ? "Solo lectura" : "Tienda"}</span>
           <button className="btn-logout" onClick={logout}>Salir</button>
         </div>
       </div>
@@ -1376,7 +1386,7 @@ export default function App() {
               <div className="error-box" style={{ marginTop: 12 }}>Este día está cerrado en horario normal.</div>
             )}
 
-            {!isSundayClosed && (
+            {!isReadOnly && !isSundayClosed && (
               <div className="section-block" style={{ marginTop: 14 }}>
                 <label className="toggle-label">
                   <input
@@ -1430,9 +1440,13 @@ export default function App() {
             </div>
 
             <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 16, flexWrap: "wrap" }}>
-              <button type="button" onClick={saveDay} disabled={savingDay || !canSaveDay || hasClosingError}>
-                {savingDay ? "Guardando..." : "Guardar día"}
-              </button>
+              {isReadOnly ? (
+                <span className="muted" style={{ padding: "6px 10px" }}>Modo solo lectura: puedes consultar, exportar y descargar, pero no modificar datos.</span>
+              ) : (
+                <button type="button" onClick={saveDay} disabled={savingDay || !canSaveDay || hasClosingError}>
+                  {savingDay ? "Guardando..." : "Guardar día"}
+                </button>
+              )}
               {hasClosingError && (
                 <span className="error-box" style={{ padding: "6px 10px", marginBottom: 0 }}>
                   Revisa los totales del cierre: alguno es menor que la mañana.
@@ -1461,7 +1475,7 @@ export default function App() {
                     : "Sin gastos registrados"}
                 </p>
               </div>
-              <button type="button" onClick={openDailyExpensesModal}>Gastos</button>
+              <button type="button" onClick={openDailyExpensesModal}>{isReadOnly ? "Ver gastos" : "Gastos"}</button>
             </div>
           </div>
 
@@ -1476,7 +1490,7 @@ export default function App() {
                     : "Sin adjuntos"}
                 </p>
               </div>
-              <button type="button" onClick={openAttachmentModal}>Adjuntar imagen</button>
+              {!isReadOnly && <button type="button" onClick={openAttachmentModal}>Adjuntar imagen</button>}
             </div>
             {attachmentsForDay.length > 0 && (
               <div className="attachments-list" style={{ marginTop: 12 }}>
@@ -1490,7 +1504,7 @@ export default function App() {
                     </div>
                     <div className="attachment-actions">
                       <button type="button" className="secondary btn-sm" onClick={() => viewAttachment(att)}>Ver imagen</button>
-                      <button type="button" className="btn-sm" style={{ background: "#dc2626", color: "#fff" }} onClick={() => deleteAttachment(att)}>Borrar</button>
+                      {!isReadOnly && <button type="button" className="btn-sm" style={{ background: "#dc2626", color: "#fff" }} onClick={() => deleteAttachment(att)}>Borrar</button>}
                     </div>
                   </div>
                 ))}
@@ -1629,7 +1643,7 @@ export default function App() {
                   <tr>
                     <th>Categoría</th>
                     <th style={{ textAlign: "right" }}>Importe</th>
-                    <th style={{ textAlign: "center" }}>Acciones</th>
+                    {!isReadOnly && <th style={{ textAlign: "center" }}>Acciones</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -1701,7 +1715,7 @@ export default function App() {
                   <th>Categoría</th>
                   <th style={{ textAlign: "right" }}>Importe</th>
                   <th style={{ textAlign: "center" }}>Activa</th>
-                  <th style={{ textAlign: "center" }}>Acciones</th>
+                  {!isReadOnly && <th style={{ textAlign: "center" }}>Acciones</th>}
                 </tr>
               </thead>
               <tbody>
@@ -1872,7 +1886,7 @@ export default function App() {
                     <tr>
                       <th>Concepto</th>
                       <th style={{ textAlign: "right" }}>Importe</th>
-                      <th style={{ textAlign: "center" }}>Acciones</th>
+                      {!isReadOnly && <th style={{ textAlign: "center" }}>Acciones</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -1880,12 +1894,14 @@ export default function App() {
                       <tr key={e.id} style={dailyExpenseDraft.id === e.id ? { background: "rgba(34,211,238,0.08)" } : undefined}>
                         <td><strong>{e.concept}</strong></td>
                         <td style={{ textAlign: "right", fontWeight: 700 }}>{money(e.amount)}</td>
-                        <td>
-                          <div style={{ display: "flex", justifyContent: "center", gap: 6 }}>
-                            <button type="button" className="secondary btn-sm" onClick={() => startEditDailyExpense(e)}>Editar</button>
-                            <button type="button" className="btn-sm" style={{ background: "#dc2626", color: "#fff" }} onClick={() => deleteDailyExpense(e.id)}>Borrar</button>
-                          </div>
-                        </td>
+                        {!isReadOnly && (
+                          <td>
+                            <div style={{ display: "flex", justifyContent: "center", gap: 6 }}>
+                              <button type="button" className="secondary btn-sm" onClick={() => startEditDailyExpense(e)}>Editar</button>
+                              <button type="button" className="btn-sm" style={{ background: "#dc2626", color: "#fff" }} onClick={() => deleteDailyExpense(e.id)}>Borrar</button>
+                            </div>
+                          </td>
+                        )}
                       </tr>
                     )) : (
                       <tr><td colSpan={3} className="muted" style={{ textAlign: "center", padding: 16 }}>
@@ -1904,6 +1920,7 @@ export default function App() {
                 )}
               </div>
 
+              {!isReadOnly && (
               <div style={{ borderTop: "1px solid var(--border)", paddingTop: 16 }}>
                 <h3 style={{ marginBottom: 8 }}>
                   {dailyExpenseDraft.id ? "Editar gasto" : "Añadir nuevo gasto"}
@@ -1937,6 +1954,7 @@ export default function App() {
                   </button>
                 </div>
               </div>
+              )}
 
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
                 <button type="button" className="secondary" onClick={closeDailyExpensesModal}>Cerrar</button>
