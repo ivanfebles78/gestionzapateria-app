@@ -34,3 +34,22 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
     if user.role != 'admin':
         raise HTTPException(status_code=403, detail='Admin access required')
     return user
+
+
+READ_ONLY_ROLES = {'viewer', 'readonly', 'read_only', 'asesor'}
+
+
+def is_read_only_user(user: User) -> bool:
+    return (user.role or '').lower() in READ_ONLY_ROLES
+
+
+def require_write_access(user: User = Depends(get_current_user)) -> User:
+    if is_read_only_user(user):
+        raise HTTPException(status_code=403, detail='Este usuario solo tiene permisos de lectura')
+    return user
+
+
+def require_export_access(user: User = Depends(get_current_user)) -> User:
+    # Cualquier usuario autenticado puede exportar/descargar. Los usuarios de solo lectura
+    # quedan autorizados aquí porque no se modifica ningún dato.
+    return user

@@ -122,12 +122,21 @@ function num(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
+// Redondea a 2 decimales evitando los artefactos clásicos de coma flotante
+// (p.ej. 23.45 + 45.67 = 69.11999999999999 → 69.12).
+function round2(n) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return 0;
+  return Math.round((x + Number.EPSILON) * 100) / 100;
+}
+
 function money(n) {
   return new Intl.NumberFormat("es-ES", {
     style: "currency",
     currency: "EUR",
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(Number(n || 0));
+  }).format(round2(Number(n || 0)));
 }
 
 function shiftAmountTotal(shift) {
@@ -164,10 +173,10 @@ function saleToLocal(sale) {
     num(sale.afternoon_cash) || num(sale.afternoon_card) || num(sale.afternoon_bizum) || num(sale.afternoon_bonos);
   const closing = afternoonHasContent
     ? {
-        cash: String(num(sale.morning_cash) + num(sale.afternoon_cash)),
-        card: String(num(sale.morning_card) + num(sale.afternoon_card)),
-        bizum: String(num(sale.morning_bizum) + num(sale.afternoon_bizum)),
-        bonos: String(num(sale.morning_bonos) + num(sale.afternoon_bonos)),
+        cash: String(round2(num(sale.morning_cash) + num(sale.afternoon_cash))),
+        card: String(round2(num(sale.morning_card) + num(sale.afternoon_card))),
+        bizum: String(round2(num(sale.morning_bizum) + num(sale.afternoon_bizum))),
+        bonos: String(round2(num(sale.morning_bonos) + num(sale.afternoon_bonos))),
       }
     : emptyShift();
   return {
@@ -629,7 +638,7 @@ export default function App() {
     for (const m of PAYMENT_METHODS) {
       const morningV = num(selectedSale.morning?.[m.key]);
       const closingV = num(closingByMethod?.[m.key]);
-      out[m.key] = Math.max(0, closingV - morningV);
+      out[m.key] = round2(Math.max(0, closingV - morningV));
     }
     return out;
   }, [closingByMethod, selectedSale.morning, isAfternoonDisabled, isDateClosed]);

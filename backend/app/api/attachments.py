@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_current_user
+from app.api.dependencies import get_current_user, require_write_access
 from app.core.config import settings
 from app.db.deps import get_db
 from app.models import DailyAttachment, User
@@ -80,7 +80,7 @@ async def upload_attachment(
     kind: str = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_write_access),
 ):
     if kind not in ALLOWED_KINDS:
         raise HTTPException(status_code=400, detail=f'Tipo de adjunto no soportado: {kind}')
@@ -148,7 +148,7 @@ def download_attachment(
 def delete_attachment(
     attachment_id: int,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_write_access),
 ):
     record = db.query(DailyAttachment).filter(DailyAttachment.id == attachment_id).first()
     if not record:

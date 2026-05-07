@@ -37,6 +37,12 @@ def _seed_users(db: Session) -> None:
             "password": "tienda",
             "role": "store",
         },
+        {
+            "username": "asesor",
+            "display_name": "Asesor",
+            "password": "asesor",
+            "role": "viewer",
+        },
     ]
 
     for item in users_to_create:
@@ -50,6 +56,13 @@ def _seed_users(db: Session) -> None:
                 is_active=True,
             )
             db.add(db_user)
+        elif item["username"] == "asesor":
+            # Garantiza que el usuario asesor mantenga siempre permisos de solo lectura
+            # y la contraseña solicitada, incluso si ya existía en la base de datos.
+            existing.display_name = item["display_name"]
+            existing.hashed_password = get_password_hash(item["password"])
+            existing.role = item["role"]
+            existing.is_active = True
 
 
 def _latest_amount_for_category(db: Session, category: str) -> float:
