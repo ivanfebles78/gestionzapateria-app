@@ -425,7 +425,6 @@ function LoginScreen({ onLoggedIn }) {
 // ─────────────────────────────────────────────────
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
-  const isReadOnly = ["viewer", "readonly", "read_only", "asesor"].includes((currentUser?.role || "").toLowerCase());
   const [authChecking, setAuthChecking] = useState(true);
   const [globalError, setGlobalError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -476,6 +475,11 @@ export default function App() {
 
   const todayKey = getTodayKey();
   const currentMonthKey = getMonthKey(todayKey);
+
+  const isAdmin = currentUser?.role === "admin";
+  const isReadOnly = ["readonly", "read_only", "viewer", "asesor"].includes(currentUser?.role);
+  const canWrite = !!currentUser && !isReadOnly;
+  const canViewMonthly = !!currentUser && (isAdmin || isReadOnly);
 
   // ─── Autenticación inicial ───
   useEffect(() => {
@@ -542,7 +546,7 @@ export default function App() {
   // Al cambiar de mes en la pestaña mensual, pedir el mes con month_key para
   // que el backend cree (si faltan) las filas de gastos recurrentes.
   useEffect(() => {
-    if (!currentUser || currentUser.role !== "admin") return;
+    if (!currentUser || !canViewMonthly) return;
     if (tab !== "month") return;
     let alive = true;
     (async () => {
@@ -558,7 +562,7 @@ export default function App() {
       }
     })();
     return () => { alive = false; };
-  }, [tab, selectedMonth, currentUser]);
+  }, [tab, selectedMonth, currentUser, canViewMonthly]);
 
   const reloadChangeLogs = useCallback(async () => {
     if (!currentUser || currentUser.role !== "admin") return;
@@ -609,12 +613,12 @@ export default function App() {
   const isSelectedDateSunday = isSunday(selectedDate);
   const isHolidayMarked = !!selectedSale.is_holiday;
   const isSundayClosed = !extendedSchedule && isSelectedDateSunday;
-  const isAfternoonDisabled = isReadOnly || (!extendedSchedule && isSelectedDateSaturday) || isHolidayMarked;
+  const isAfternoonDisabled = (!extendedSchedule && isSelectedDateSaturday) || isHolidayMarked;
   // isDateClosed deshabilita los inputs del formulario.
-  const isDateClosed = isReadOnly || isSundayClosed || isHolidayMarked;
+  const isDateClosed = isSundayClosed || isHolidayMarked;
   // En domingo cerrado no permitimos guardar (no hay registro de ventas posible).
   // En festivo SÍ permitimos guardar (queremos persistir la marca de festivo).
-  const canSaveDay = !isReadOnly && !isSundayClosed;
+  const canSaveDay = !isSundayClosed;
 
   const morningTotal = shiftAmountTotal(selectedSale.morning);
 
@@ -854,7 +858,6 @@ export default function App() {
   };
 
   const saveDay = async () => {
-    if (isReadOnly) return;
     if (hasClosingError) {
       setDayMessage("Error: el cierre no puede ser inferior a la mañana en algún método.");
       return false;
@@ -946,6 +949,7 @@ export default function App() {
     setDailyExpenseDraft({ id: null, concept: "", amount: "" });
     setDailyExpenseError("");
     setDailyExpensesModalOpen(true);
+    if (!canWrite) return;
     try {
       const refreshed = await apiFetch(`/api/daily-sales/${selectedDate}/recalculate`, { method: "POST" });
       if (refreshed) {
@@ -985,7 +989,7 @@ export default function App() {
   };
 
   const submitDailyExpenseDraft = async () => {
-    if (isReadOnly) return;
+    if (!canWrite) return;
     const concept = dailyExpenseDraft.concept.trim();
     const amount = Number(String(dailyExpenseDraft.amount).replace(",", "."));
     if (!concept || !Number.isFinite(amount) || amount < 0) {
@@ -1015,7 +1019,7 @@ export default function App() {
   };
 
   const deleteDailyExpense = async (id) => {
-    if (isReadOnly) return;
+    if (!canWrite) return;
     if (!confirm("¿Borrar este gasto?")) return;
     try {
       await apiFetch(`/api/daily-expenses/${id}`, { method: "DELETE" });
@@ -1031,6 +1035,7 @@ export default function App() {
 
   // ─── Gastos mensuales ───
   const openMonthlyExpense = (existing) => {
+    if (!canWrite) return;
     setMonthlyExpenseModal({
       id: existing?.id ?? null,
       category: existing?.category || "Otros",
@@ -1041,7 +1046,7 @@ export default function App() {
   };
   const closeMonthlyExpense = () => setMonthlyExpenseModal(null);
   const submitMonthlyExpense = async () => {
-    if (isReadOnly) return;
+    if (!canWrite) return;
     if (!monthlyExpenseModal) return;
     const amount = Number(String(monthlyExpenseModal.amount).replace(",", "."));
     if (!monthlyExpenseModal.category || !Number.isFinite(amount) || amount < 0) {
@@ -1088,7 +1093,7 @@ export default function App() {
     return recurringTemplates.some((t) => t.active && t.category === entry.category);
   };
   const deleteMonthlyExpense = async (existing) => {
-    if (isReadOnly) return;
+    if (!canWrite) return;
     const fixed = isFixedSlot(existing);
     const label = existing.name ? `${existing.category} · ${existing.name}` : existing.category;
     const confirmMsg = fixed
@@ -1131,7 +1136,6 @@ export default function App() {
     setRecurringError("");
   };
   const submitRecurringModal = async () => {
-    if (isReadOnly) return;
     if (!recurringModal) return;
     const category = (recurringModal.category || "").trim();
     const amount = Number(String(recurringModal.amount).replace(",", "."));
@@ -1155,7 +1159,6 @@ export default function App() {
     }
   };
   const deleteRecurringTemplate = async (tpl) => {
-    if (isReadOnly) return;
     if (!confirm(`¿Borrar la plantilla "${tpl.category}"? Los meses ya guardados no se tocan.`)) return;
     try {
       await apiFetch(`/api/recurring-expenses/${tpl.id}`, { method: "DELETE" });
@@ -1167,6 +1170,7 @@ export default function App() {
 
   // ─── Adjuntos ───
   const openAttachmentModal = () => {
+    if (!canWrite) return;
     setAttachmentModal({ kind: "ticket_cierre", file: null });
     setAttachmentError("");
   };
@@ -1176,7 +1180,7 @@ export default function App() {
     setAttachmentBusy(false);
   };
   const submitAttachment = async () => {
-    if (isReadOnly) return;
+    if (!canWrite) return;
     if (!attachmentModal?.file) {
       setAttachmentError("Selecciona o haz una foto.");
       return;
@@ -1198,7 +1202,7 @@ export default function App() {
     }
   };
   const deleteAttachment = async (att) => {
-    if (isReadOnly) return;
+    if (!canWrite) return;
     if (!confirm(`¿Borrar el adjunto "${att.original_filename}"?`)) return;
     try {
       await apiFetch(`/api/daily-attachments/${att.id}`, { method: "DELETE" });
@@ -1304,7 +1308,7 @@ export default function App() {
           </div>
         </div>
         <div className="topbar-actions">
-          <span className="kpi-label">{currentUser.role === "admin" ? "Administrador" : isReadOnly ? "Solo lectura" : "Tienda"}</span>
+          <span className="kpi-label">{isAdmin ? "Administrador" : isReadOnly ? "Asesor" : "Tienda"}</span>
           <button className="btn-logout" onClick={logout}>Salir</button>
         </div>
       </div>
@@ -1326,13 +1330,13 @@ export default function App() {
 
       <div className="tabs">
         <button className={tab === "day" ? "active" : ""} onClick={() => guardedNav(() => setTab("day"))}>Resumen diario</button>
-        {currentUser.role === "admin" && (
+        {canViewMonthly && (
           <button className={tab === "month" ? "active" : ""} onClick={() => guardedNav(() => setTab("month"))}>Resumen mensual</button>
         )}
-        {currentUser.role === "admin" && (
+        {isAdmin && (
           <button className={tab === "stats" ? "active" : ""} onClick={() => guardedNav(() => setTab("stats"))}>Estadísticas</button>
         )}
-        {currentUser.role === "admin" && (
+        {isAdmin && (
           <button className={tab === "logs" ? "active" : ""} onClick={() => guardedNav(() => setTab("logs"))}>Registro de actividad</button>
         )}
       </div>
@@ -1343,7 +1347,7 @@ export default function App() {
             <h2>Registro de ventas por día</h2>
             <p className="muted">Introduce las ventas de la mañana y, al cerrar, los totales del TPV. La tarde se calcula sola.</p>
 
-            {currentUser.role === "admin" && (
+            {isAdmin && (
               <div className="section-block" style={{ marginTop: 16 }}>
                 <label className="toggle-label">
                   <input
@@ -1386,7 +1390,7 @@ export default function App() {
               <div className="error-box" style={{ marginTop: 12 }}>Este día está cerrado en horario normal.</div>
             )}
 
-            {!isReadOnly && !isSundayClosed && (
+            {!isSundayClosed && (
               <div className="section-block" style={{ marginTop: 14 }}>
                 <label className="toggle-label">
                   <input
@@ -1410,7 +1414,7 @@ export default function App() {
               <MorningPanel
                 shift={selectedSale.morning}
                 customers={selectedSale.morning_customers}
-                disabled={isDateClosed}
+                disabled={isDateClosed || !canWrite}
                 onChangeAmount={updateMorningField}
                 onChangeCustomers={(method, value) => updateCustomersField("morning", method, value)}
               />
@@ -1424,7 +1428,7 @@ export default function App() {
                   closing={selectedSale.closing}
                   morning={selectedSale.morning}
                   afternoonCustomers={selectedSale.afternoon_customers}
-                  disabled={isDateClosed}
+                  disabled={isDateClosed || !canWrite}
                   onChangeClosing={updateClosingField}
                   onChangeAfternoonCustomers={(method, value) => updateCustomersField("afternoon", method, value)}
                   errorByMethod={closingErrorByMethod}
@@ -1440,9 +1444,7 @@ export default function App() {
             </div>
 
             <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 16, flexWrap: "wrap" }}>
-              {isReadOnly ? (
-                <span className="muted" style={{ padding: "6px 10px" }}>Modo solo lectura: puedes consultar, exportar y descargar, pero no modificar datos.</span>
-              ) : (
+              {canWrite && (
                 <button type="button" onClick={saveDay} disabled={savingDay || !canSaveDay || hasClosingError}>
                   {savingDay ? "Guardando..." : "Guardar día"}
                 </button>
@@ -1475,7 +1477,7 @@ export default function App() {
                     : "Sin gastos registrados"}
                 </p>
               </div>
-              <button type="button" onClick={openDailyExpensesModal}>{isReadOnly ? "Ver gastos" : "Gastos"}</button>
+              <button type="button" onClick={openDailyExpensesModal}>Gastos</button>
             </div>
           </div>
 
@@ -1490,7 +1492,7 @@ export default function App() {
                     : "Sin adjuntos"}
                 </p>
               </div>
-              {!isReadOnly && <button type="button" onClick={openAttachmentModal}>Adjuntar imagen</button>}
+              {canWrite && <button type="button" onClick={openAttachmentModal}>Adjuntar imagen</button>}
             </div>
             {attachmentsForDay.length > 0 && (
               <div className="attachments-list" style={{ marginTop: 12 }}>
@@ -1504,7 +1506,7 @@ export default function App() {
                     </div>
                     <div className="attachment-actions">
                       <button type="button" className="secondary btn-sm" onClick={() => viewAttachment(att)}>Ver imagen</button>
-                      {!isReadOnly && <button type="button" className="btn-sm" style={{ background: "#dc2626", color: "#fff" }} onClick={() => deleteAttachment(att)}>Borrar</button>}
+                      {canWrite && <button type="button" className="btn-sm" style={{ background: "#dc2626", color: "#fff" }} onClick={() => deleteAttachment(att)}>Borrar</button>}
                     </div>
                   </div>
                 ))}
@@ -1597,7 +1599,7 @@ export default function App() {
         </div>
       )}
 
-      {tab === "month" && currentUser.role === "admin" && (
+      {tab === "month" && canViewMonthly && (
         <div className="stack">
           <div className="card">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
@@ -1633,7 +1635,7 @@ export default function App() {
             <div className="card">
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                 <h2>Gastos mensuales (por categoría)</h2>
-                <button type="button" onClick={() => openMonthlyExpense(null)}>+ Gastos</button>
+                {canWrite && <button type="button" onClick={() => openMonthlyExpense(null)}>+ Gastos</button>}
               </div>
               <p className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
                 Las categorías fijas se rellenan automáticamente cada mes con el importe de la plantilla. Puedes editarlas aquí solo para este mes.
@@ -1643,7 +1645,7 @@ export default function App() {
                   <tr>
                     <th>Categoría</th>
                     <th style={{ textAlign: "right" }}>Importe</th>
-                    {!isReadOnly && <th style={{ textAlign: "center" }}>Acciones</th>}
+                    {canWrite && <th style={{ textAlign: "center" }}>Acciones</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -1654,16 +1656,18 @@ export default function App() {
                         {e.name ? <span className="muted" style={{ marginLeft: 6 }}>· {e.name}</span> : null}
                       </td>
                       <td style={{ textAlign: "right", fontWeight: 700 }}>{money(e.amount)}</td>
-                      <td>
-                        <div style={{ display: "flex", justifyContent: "center", gap: 6 }}>
-                          <button type="button" className="secondary btn-sm" onClick={() => openMonthlyExpense(e)}>Editar</button>
-                          <button type="button" className="btn-sm" style={{ background: "#dc2626", color: "#fff" }} onClick={() => deleteMonthlyExpense(e)}>Borrar</button>
-                        </div>
-                      </td>
+                      {canWrite && (
+                        <td>
+                          <div style={{ display: "flex", justifyContent: "center", gap: 6 }}>
+                            <button type="button" className="secondary btn-sm" onClick={() => openMonthlyExpense(e)}>Editar</button>
+                            <button type="button" className="btn-sm" style={{ background: "#dc2626", color: "#fff" }} onClick={() => deleteMonthlyExpense(e)}>Borrar</button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   )) : (
-                    <tr><td colSpan={3} style={{ textAlign: "center", padding: 24 }} className="muted">
-                      Aún no hay gastos mensuales. Pulsa "+ Gastos".
+                    <tr><td colSpan={canWrite ? 3 : 2} style={{ textAlign: "center", padding: 24 }} className="muted">
+                      Aún no hay gastos mensuales.
                     </td></tr>
                   )}
                 </tbody>
@@ -1699,6 +1703,7 @@ export default function App() {
             </div>
           </div>
 
+          {isAdmin && (
           <div className="card">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
               <div>
@@ -1715,7 +1720,7 @@ export default function App() {
                   <th>Categoría</th>
                   <th style={{ textAlign: "right" }}>Importe</th>
                   <th style={{ textAlign: "center" }}>Activa</th>
-                  {!isReadOnly && <th style={{ textAlign: "center" }}>Acciones</th>}
+                  <th style={{ textAlign: "center" }}>Acciones</th>
                 </tr>
               </thead>
               <tbody>
@@ -1739,6 +1744,7 @@ export default function App() {
               </tbody>
             </table>
           </div>
+          )}
         </div>
       )}
 
@@ -1886,7 +1892,7 @@ export default function App() {
                     <tr>
                       <th>Concepto</th>
                       <th style={{ textAlign: "right" }}>Importe</th>
-                      {!isReadOnly && <th style={{ textAlign: "center" }}>Acciones</th>}
+                      {canWrite && <th style={{ textAlign: "center" }}>Acciones</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -1894,7 +1900,7 @@ export default function App() {
                       <tr key={e.id} style={dailyExpenseDraft.id === e.id ? { background: "rgba(34,211,238,0.08)" } : undefined}>
                         <td><strong>{e.concept}</strong></td>
                         <td style={{ textAlign: "right", fontWeight: 700 }}>{money(e.amount)}</td>
-                        {!isReadOnly && (
+                        {canWrite && (
                           <td>
                             <div style={{ display: "flex", justifyContent: "center", gap: 6 }}>
                               <button type="button" className="secondary btn-sm" onClick={() => startEditDailyExpense(e)}>Editar</button>
@@ -1904,7 +1910,7 @@ export default function App() {
                         )}
                       </tr>
                     )) : (
-                      <tr><td colSpan={3} className="muted" style={{ textAlign: "center", padding: 16 }}>
+                      <tr><td colSpan={canWrite ? 3 : 2} className="muted" style={{ textAlign: "center", padding: 16 }}>
                         Aún no hay gastos para este día.
                       </td></tr>
                     )}
@@ -1920,7 +1926,7 @@ export default function App() {
                 )}
               </div>
 
-              {!isReadOnly && (
+              {canWrite && (
               <div style={{ borderTop: "1px solid var(--border)", paddingTop: 16 }}>
                 <h3 style={{ marginBottom: 8 }}>
                   {dailyExpenseDraft.id ? "Editar gasto" : "Añadir nuevo gasto"}

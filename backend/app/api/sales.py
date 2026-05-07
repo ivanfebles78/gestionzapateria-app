@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_current_user, is_read_only_user, require_admin, require_write_access
+from app.api.dependencies import get_current_user, require_admin, require_write_user
 from app.db.deps import get_db
 from app.models import (
     AdminNotification,
@@ -138,9 +138,6 @@ def create_admin_notification(
 
 @router.get('/settings', response_model=AppSettingsRead)
 def read_settings(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    if is_read_only_user(user):
-        settings = db.query(AppSetting).filter(AppSetting.id == 1).first()
-        return AppSettingsRead(extended_schedule_enabled=bool(settings.extended_schedule_enabled) if settings else False)
     settings = get_or_create_settings(db)
     return AppSettingsRead(extended_schedule_enabled=settings.extended_schedule_enabled)
 
@@ -170,7 +167,7 @@ def list_daily_sales(
 
 
 @router.put('/daily-sales', response_model=DailySaleRead)
-def upsert_daily_sale(payload: DailySaleUpsert, db: Session = Depends(get_db), user: User = Depends(require_write_access)):
+def upsert_daily_sale(payload: DailySaleUpsert, db: Session = Depends(get_db), user: User = Depends(require_write_user)):
     if payload.sale_date > date.today():
         raise HTTPException(status_code=400, detail='No se pueden registrar ventas para fechas futuras')
 
@@ -232,7 +229,7 @@ def upsert_daily_sale(payload: DailySaleUpsert, db: Session = Depends(get_db), u
 
 
 @router.post('/daily-sales/{sale_date}/unlock', response_model=DailySaleRead)
-def unlock_daily_sale(sale_date: date, db: Session = Depends(get_db), user: User = Depends(require_write_access)):
+def unlock_daily_sale(sale_date: date, db: Session = Depends(get_db), user: User = Depends(require_write_user)):
     sale = db.query(DailySale).filter(DailySale.sale_date == sale_date).first()
     if not sale:
         raise HTTPException(status_code=404, detail='Daily sale not found')
@@ -244,7 +241,7 @@ def unlock_daily_sale(sale_date: date, db: Session = Depends(get_db), user: User
 
 
 @router.post('/daily-sales/{sale_date}/recalculate', response_model=DailySaleRead)
-def recalculate_daily_sale(sale_date: date, db: Session = Depends(get_db), user: User = Depends(require_write_access)):
+def recalculate_daily_sale(sale_date: date, db: Session = Depends(get_db), user: User = Depends(require_write_user)):
     """Fuerza el recálculo de totales y balance del día desde los registros reales.
     Útil cuando daily_expenses_total quedó desincronizado por algún motivo histórico."""
     sale = db.query(DailySale).filter(DailySale.sale_date == sale_date).first()
@@ -265,7 +262,7 @@ def list_daily_expenses(sale_date: date | None = Query(default=None), db: Sessio
 
 
 @router.post('/daily-expenses', response_model=DailyExpenseRead)
-def create_daily_expense(payload: DailyExpenseCreate, db: Session = Depends(get_db), user: User = Depends(require_write_access)):
+def create_daily_expense(payload: DailyExpenseCreate, db: Session = Depends(get_db), user: User = Depends(require_write_user)):
     if payload.sale_date > date.today():
         raise HTTPException(status_code=400, detail='No se pueden registrar gastos para fechas futuras')
 
@@ -306,7 +303,7 @@ def update_daily_expense(
     expense_id: int,
     payload: DailyExpenseUpdate,
     db: Session = Depends(get_db),
-    user: User = Depends(require_write_access),
+    user: User = Depends(require_write_user),
 ):
     expense = db.query(DailyExpense).filter(DailyExpense.id == expense_id).first()
     if not expense:
@@ -338,7 +335,7 @@ def update_daily_expense(
 def delete_daily_expense(
     expense_id: int,
     db: Session = Depends(get_db),
-    user: User = Depends(require_write_access),
+    user: User = Depends(require_write_user),
 ):
     expense = db.query(DailyExpense).filter(DailyExpense.id == expense_id).first()
     if not expense:
@@ -397,11 +394,10 @@ def _ensure_recurring_for_month(db: Session, month_key: str) -> None:
 
 @router.get('/monthly-expenses', response_model=list[MonthlyExpenseRead])
 def list_monthly_expenses(month_key: str | None = None, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    if not is_read_only_user(user):
-        if month_key:
-            _ensure_recurring_for_month(db, month_key)
-        else:
-            _ensure_recurring_for_month(db, date.today().strftime('%Y-%m'))
+    if month_key:
+        _ensure_recurring_for_month(db, month_key)
+    else:
+        _ensure_recurring_for_month(db, date.today().strftime('%Y-%m'))
     query = db.query(MonthlyExpense)
     if month_key:
         query = query.filter(MonthlyExpense.month_key == month_key)

@@ -36,20 +36,9 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
     return user
 
 
-READ_ONLY_ROLES = {'viewer', 'readonly', 'read_only', 'asesor'}
 
-
-def is_read_only_user(user: User) -> bool:
-    return (user.role or '').lower() in READ_ONLY_ROLES
-
-
-def require_write_access(user: User = Depends(get_current_user)) -> User:
-    if is_read_only_user(user):
-        raise HTTPException(status_code=403, detail='Este usuario solo tiene permisos de lectura')
-    return user
-
-
-def require_export_access(user: User = Depends(get_current_user)) -> User:
-    # Cualquier usuario autenticado puede exportar/descargar. Los usuarios de solo lectura
-    # quedan autorizados aquí porque no se modifica ningún dato.
+def require_write_user(user: User = Depends(get_current_user)) -> User:
+    """Permite escribir a administradores/tienda, pero bloquea usuarios de solo lectura."""
+    if user.role in {'readonly', 'read_only', 'viewer', 'asesor'}:
+        raise HTTPException(status_code=403, detail='Usuario de solo lectura: no puede crear, editar ni borrar')
     return user

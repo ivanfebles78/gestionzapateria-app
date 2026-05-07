@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import require_export_access
+from app.api.dependencies import get_current_user
 from app.core.config import settings
 from app.db.deps import get_db
 from app.models import DailyAttachment, DailyExpense, DailySale, MonthlyExpense, User
@@ -59,7 +59,7 @@ def export_sales_xlsx(
     date_from: date_cls | None = Query(default=None),
     date_to: date_cls | None = Query(default=None),
     db: Session = Depends(get_db),
-    user: User = Depends(require_export_access),
+    user: User = Depends(get_current_user),
 ):
     try:
         from openpyxl import Workbook
@@ -179,7 +179,7 @@ def export_attachments_zip(
     date_from: date_cls | None = Query(default=None),
     date_to: date_cls | None = Query(default=None),
     db: Session = Depends(get_db),
-    user: User = Depends(require_export_access),
+    user: User = Depends(get_current_user),
 ):
     start, end = _resolve_date_range(month_key, date_from, date_to)
 

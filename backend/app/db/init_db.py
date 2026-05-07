@@ -41,7 +41,7 @@ def _seed_users(db: Session) -> None:
             "username": "asesor",
             "display_name": "Asesor",
             "password": "asesor",
-            "role": "viewer",
+            "role": "readonly",
         },
     ]
 
@@ -57,8 +57,8 @@ def _seed_users(db: Session) -> None:
             )
             db.add(db_user)
         elif item["username"] == "asesor":
-            # Garantiza que el usuario asesor mantenga siempre permisos de solo lectura
-            # y la contraseña solicitada, incluso si ya existía en la base de datos.
+            # Asegura que el usuario asesor queda siempre con la contraseña y rol correctos
+            # aunque ya existiera en la base de datos con otro hash/rol.
             existing.display_name = item["display_name"]
             existing.hashed_password = get_password_hash(item["password"])
             existing.role = item["role"]
