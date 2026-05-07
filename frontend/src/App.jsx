@@ -361,6 +361,7 @@ const LOGIN_OPTIONS = [
   { username: "Ivan", label: "Iván" },
   { username: "Claudia", label: "Claudia" },
   { username: "Tienda", label: "Tienda" },
+  { username: "Asesor", label: "Asesor" },
 ];
 
 function LoginScreen({ onLoggedIn }) {
