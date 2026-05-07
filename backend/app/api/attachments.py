@@ -36,8 +36,43 @@ EXT_BY_CONTENT_TYPE = {
 }
 
 
+def _candidate_upload_dirs() -> list[Path]:
+    candidates: list[Path] = []
+    for raw in (
+        os.getenv('UPLOAD_DIR'),
+        getattr(settings, 'UPLOAD_DIR', None),
+        '/data/uploads',
+        '/app/uploads',
+        'uploads',
+    ):
+        if not raw:
+            continue
+        path = Path(str(raw))
+        if path not in candidates:
+            candidates.append(path)
+    return candidates
+
+
+def _primary_upload_dir() -> Path:
+    env_dir = os.getenv('UPLOAD_DIR')
+    if env_dir:
+        return Path(env_dir)
+    data_dir = Path('/data/uploads')
+    if Path('/data').exists():
+        return data_dir
+    return Path(settings.UPLOAD_DIR)
+
+
+def _resolve_existing_file(stored_filename: str) -> Path | None:
+    for base_dir in _candidate_upload_dirs():
+        file_path = base_dir / stored_filename
+        if file_path.is_file():
+            return file_path
+    return None
+
+
 def _ensure_upload_dir() -> Path:
-    base = Path(settings.UPLOAD_DIR)
+    base = _primary_upload_dir()
     try:
         base.mkdir(parents=True, exist_ok=True)
     except Exception as exc:
@@ -133,10 +168,10 @@ def download_attachment(
     record = db.query(DailyAttachment).filter(DailyAttachment.id == attachment_id).first()
     if not record:
         raise HTTPException(status_code=404, detail='Adjunto no encontrado')
-    base_dir = Path(settings.UPLOAD_DIR)
-    file_path = base_dir / record.stored_filename
-    if not file_path.is_file():
-        raise HTTPException(status_code=410, detail='El archivo ya no está disponible en disco')
+    file_path = _resolve_existing_file(record.stored_filename)
+    if not file_path:
+        searched = ', '.join(str(p) for p in _candidate_upload_dirs())
+        raise HTTPException(status_code=410, detail=f'El archivo ya no está disponible en disco. Revisar UPLOAD_DIR/volumen persistente. Rutas comprobadas: {searched}')
     return FileResponse(
         path=str(file_path),
         media_type=record.content_type or 'application/octet-stream',
@@ -153,8 +188,9 @@ def delete_attachment(
     record = db.query(DailyAttachment).filter(DailyAttachment.id == attachment_id).first()
     if not record:
         raise HTTPException(status_code=404, detail='Adjunto no encontrado')
-    base_dir = Path(settings.UPLOAD_DIR)
-    file_path = base_dir / record.stored_filename
+    file_path = _resolve_existing_file(record.stored_filename)
+    if not file_path:
+        file_path = _primary_upload_dir() / record.stored_filename
     try:
         if file_path.is_file():
             file_path.unlink()

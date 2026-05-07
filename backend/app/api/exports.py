@@ -1,4 +1,5 @@
 import io
+import os
 import re
 import zipfile
 from datetime import date as date_cls
@@ -22,6 +23,31 @@ KIND_LABELS = {
     'gasto': 'Gasto',
     'otro': 'Otro',
 }
+
+
+def _candidate_upload_dirs() -> list[Path]:
+    candidates: list[Path] = []
+    for raw in (
+        os.getenv('UPLOAD_DIR'),
+        getattr(settings, 'UPLOAD_DIR', None),
+        '/data/uploads',
+        '/app/uploads',
+        'uploads',
+    ):
+        if not raw:
+            continue
+        path = Path(str(raw))
+        if path not in candidates:
+            candidates.append(path)
+    return candidates
+
+
+def _resolve_existing_file(stored_filename: str) -> Path | None:
+    for base_dir in _candidate_upload_dirs():
+        file_path = base_dir / stored_filename
+        if file_path.is_file():
+            return file_path
+    return None
 
 
 def _slug(value: str) -> str:
@@ -190,14 +216,13 @@ def export_attachments_zip(
         .all()
     )
 
-    base_dir = Path(settings.UPLOAD_DIR)
     buffer = io.BytesIO()
     used_names: dict[str, int] = {}
 
     with zipfile.ZipFile(buffer, mode='w', compression=zipfile.ZIP_DEFLATED) as zf:
         for rec in records:
-            file_path = base_dir / rec.stored_filename
-            if not file_path.is_file():
+            file_path = _resolve_existing_file(rec.stored_filename)
+            if not file_path:
                 continue
             ext = Path(rec.stored_filename).suffix or Path(rec.original_filename or '').suffix or '.bin'
             kind_label = KIND_LABELS.get(rec.kind, _slug(rec.kind))
