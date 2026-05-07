@@ -1,5 +1,4 @@
 import os
-import secrets
 from datetime import date as date_cls
 from pathlib import Path
 
@@ -36,12 +35,33 @@ EXT_BY_CONTENT_TYPE = {
     'application/pdf': '.pdf',
 }
 
+MONTHS_ES = {
+    1: 'enero',
+    2: 'febrero',
+    3: 'marzo',
+    4: 'abril',
+    5: 'mayo',
+    6: 'junio',
+    7: 'julio',
+    8: 'agosto',
+    9: 'septiembre',
+    10: 'octubre',
+    11: 'noviembre',
+    12: 'diciembre',
+}
+
+KIND_FILENAME_PREFIX = {
+    'ticket_manana': 'ticket_manana',
+    'ticket_cierre': 'ticket_tarde',
+    'gasto': 'gasto',
+    'otro': 'otro',
+}
+
 
 def _candidate_dirs():
     dirs = []
 
     upload_dir = getattr(settings, "UPLOAD_DIR", None)
-
     if upload_dir:
         dirs.append(Path(upload_dir))
 
@@ -82,6 +102,30 @@ def _safe_extension(filename: str, content_type: str) -> str:
         return '.jpg' if dot_ext == '.jpeg' else dot_ext
 
     return '.bin'
+
+
+def _date_slug_es(value: date_cls) -> str:
+    return f"{value.day}{MONTHS_ES[value.month]}{value.year}"
+
+
+def _build_stored_filename(db: Session, *, sale_date: date_cls, kind: str, ext: str, base_dir: Path) -> str:
+    prefix = KIND_FILENAME_PREFIX.get(kind, kind)
+    date_slug = _date_slug_es(sale_date)
+    base_name = f"{prefix}_{date_slug}"
+
+    existing_db_count = (
+        db.query(DailyAttachment)
+        .filter(DailyAttachment.sale_date == sale_date, DailyAttachment.kind == kind)
+        .count()
+    )
+
+    number = existing_db_count + 1
+
+    while True:
+        filename = f"{base_name}_{number}{ext}"
+        if not (base_dir / filename).exists():
+            return filename
+        number += 1
 
 
 @router.get('/debug/files')
@@ -139,27 +183,46 @@ async def upload_attachment(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    if user.role == 'asesor':
+        raise HTTPException(status_code=403, detail='Solo lectura')
+
     if kind not in ALLOWED_KINDS:
-        raise HTTPException(status_code=400, detail='Tipo de adjunto no soportado')
+        raise HTTPException(status_code=400, detail=f'Tipo de adjunto no soportado: {kind}')
+
+    if sale_date > date_cls.today():
+        raise HTTPException(status_code=400, detail='No se pueden subir adjuntos con fecha futura')
 
     if not file.content_type or file.content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(status_code=400, detail='Tipo de archivo no soportado')
+        raise HTTPException(status_code=400, detail=f'Tipo de archivo no soportado: {file.content_type}')
 
+    max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
     raw = await file.read()
 
     if len(raw) == 0:
-        raise HTTPException(status_code=400, detail='Archivo vacío')
+        raise HTTPException(status_code=400, detail='El archivo está vacío')
+
+    if len(raw) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f'Archivo demasiado grande (>{settings.MAX_UPLOAD_SIZE_MB} MB)',
+        )
 
     base_dir = _ensure_upload_dir()
-
     ext = _safe_extension(file.filename or '', file.content_type)
-
-    stored_filename = f"{sale_date.isoformat()}_{kind}_{secrets.token_hex(6)}{ext}"
-
+    stored_filename = _build_stored_filename(
+        db,
+        sale_date=sale_date,
+        kind=kind,
+        ext=ext,
+        base_dir=base_dir,
+    )
     target_path = base_dir / stored_filename
 
-    with open(target_path, 'wb') as fh:
-        fh.write(raw)
+    try:
+        with open(target_path, 'wb') as fh:
+            fh.write(raw)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f'No se pudo guardar el archivo: {exc}') from exc
 
     record = DailyAttachment(
         sale_date=sale_date,
